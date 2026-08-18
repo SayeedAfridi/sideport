@@ -128,7 +128,9 @@ public final class AdbSyncSession {
                 entries.append(AdbFileEntry(name: name,
                                             mode: mode,
                                             size: Int64(bitPattern: size),
-                                            modified: Date(timeIntervalSince1970: TimeInterval(mtime))))
+                                            modified: Date(timeIntervalSince1970: TimeInterval(mtime)),
+                                            dev: ByteCodec.readU64(header, at: 4),
+                                            ino: ByteCodec.readU64(header, at: 12)))
             case "DONE":
                 _ = try connection.readRaw(72)
                 return entries
@@ -178,7 +180,9 @@ public final class AdbSyncSession {
         return AdbFileEntry(name: name,
                             mode: ByteCodec.readU32(body, at: 20),
                             size: Int64(bitPattern: ByteCodec.readU64(body, at: 36)),
-                            modified: Date(timeIntervalSince1970: TimeInterval(ByteCodec.readI64(body, at: 52))))
+                            modified: Date(timeIntervalSince1970: TimeInterval(ByteCodec.readI64(body, at: 52))),
+                            dev: ByteCodec.readU64(body, at: 4),
+                            ino: ByteCodec.readU64(body, at: 12))
     }
 
     // MARK: - Pull

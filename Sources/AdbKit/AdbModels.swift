@@ -65,12 +65,23 @@ public struct AdbFileEntry: Sendable, Hashable {
     public let mode: UInt32
     public let size: Int64
     public let modified: Date
+    /// Device and inode numbers, present only on `ls_v2`/`stat_v2` devices.
+    ///
+    /// These are a *hint* for detecting that a file moved rather than being
+    /// deleted and recreated. They are deliberately never used as identity:
+    /// `/storage/emulated/0` is a FUSE mount and inode stability across
+    /// remounts is not contractual.
+    public let dev: UInt64?
+    public let ino: UInt64?
 
-    public init(name: String, mode: UInt32, size: Int64, modified: Date) {
+    public init(name: String, mode: UInt32, size: Int64, modified: Date,
+                dev: UInt64? = nil, ino: UInt64? = nil) {
         self.name = name
         self.mode = mode
         self.size = size
         self.modified = modified
+        self.dev = dev
+        self.ino = ino
     }
 
     private static let formatMask: UInt32 = 0o170000
