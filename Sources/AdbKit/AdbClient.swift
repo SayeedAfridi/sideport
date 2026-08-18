@@ -18,6 +18,9 @@ public final class AdbClient: Sendable {
     /// The adb server gains nothing from more parallelism than this anyway,
     /// since a single USB transport serialises underneath.
     private let gate: OperationQueue
+    /// Long-lived streams (device tracking, the filesystem watcher) run here so
+    /// they never occupy a slot in the bounded gate.
+    let streamingQueue: DispatchQueue
     private let featureCache = FeatureCache()
 
     public init(endpoint: AdbEndpoint = .default) {
@@ -29,6 +32,9 @@ public final class AdbClient: Sendable {
         self.gate.underlyingQueue = queue
         self.gate.maxConcurrentOperationCount = 6
         self.gate.name = "dev.finderadb.adbkit.io.gate"
+        self.streamingQueue = DispatchQueue(label: "dev.finderadb.adbkit.streams",
+                                            qos: .utility,
+                                            attributes: .concurrent)
     }
 
     // MARK: - Server
@@ -87,7 +93,7 @@ public final class AdbClient: Sendable {
     /// This is the hot-plug signal the Finder integration needs.
     public func deviceChanges() -> AsyncThrowingStream<[AdbDevice], Error> {
         AsyncThrowingStream { continuation in
-            queue.async {
+            streamingQueue.async {
                 do {
                     // Long-lived: no read timeout, changes may be hours apart.
                     let connection = try AdbConnection(endpoint: self.endpoint, ioTimeout: 0)

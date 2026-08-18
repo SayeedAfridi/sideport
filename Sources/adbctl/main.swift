@@ -23,6 +23,7 @@ Commands:
   df <remote>                   Free space on the containing volume
   shell <command...>            Run a shell command
   watch                         Stream device hot-plug events
+  watchfs <remote-dir>...       Stream filesystem events via inotifyd
   selftest <remote-dir>         Round-trip every operation in a scratch dir
   bench [MB] [remote-dir]       Measure throughput and peak memory (default 256 MB)
 """
@@ -160,6 +161,24 @@ do {
         let directory = operands.count > 1 ? operands[1] : "/sdcard"
         try await Benchmark(client: client, selector: try await resolveSelector())
             .run(megabytes: megabytes, remoteDirectory: directory)
+
+    case "watchfs":
+        let args = require(1, "watchfs <remote-dir>...")
+        let selector = try await resolveSelector()
+        // inotify is not recursive: every directory needs its own watch.
+        let spec = args.map { "\(adbShellQuote($0)):ncdwmyD" }.joined(separator: " ")
+        print("watching \(args.count) director\(args.count == 1 ? "y" : "ies") (ctrl-c to stop)…")
+        // Unbuffered: a stream that only appears when the process dies is not a
+        // stream.
+        setvbuf(stdout, nil, _IONBF, 0)
+        for try await line in client.shellLines("inotifyd - \(spec)", on: selector) {
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            if fields.count >= 3 {
+                print("\(Date().formatted(date: .omitted, time: .standard))  \(fields[0])  \(fields[1])/\(fields[2])")
+            } else {
+                print("\(Date().formatted(date: .omitted, time: .standard))  \(line)")
+            }
+        }
 
     case "selftest":
         let args = require(1, "selftest <remote-dir>")

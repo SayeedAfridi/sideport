@@ -16,22 +16,50 @@ actor DeviceSession {
     private let client = AdbClient()
     private var store: MetadataStore?
     private var deviceRoot: String?
+    private var opening: Task<MetadataStore, Error>?
+    private let domain: NSFileProviderDomain
+    private var watcher: InotifyWatcher?
 
     init(domain: NSFileProviderDomain) {
+        self.domain = domain
         serial = domain.identifier.rawValue
         selector = .serial(domain.identifier.rawValue)
         rootFilename = domain.displayName
     }
 
+    func shutdown() async {
+        await watcher?.stop()
+        watcher = nil
+    }
+
     // MARK: - Setup
 
     /// Opens the store, resolving the device's storage root first.
+    ///
+    /// Guarded by an in-flight task rather than a plain nil check: actors are
+    /// re-entrant, so the `await` below suspends and lets a second caller
+    /// through the check, and both would then open the same SQLite file.
     func preparedStore() async throws -> MetadataStore {
         if let store { return store }
+        if let opening { return try await opening.value }
+
+        let task = Task { try await openStore() }
+        opening = task
+        do {
+            let opened = try await task.value
+            store = opened
+            opening = nil
+            return opened
+        } catch {
+            opening = nil
+            throw error
+        }
+    }
+
+    private func openStore() async throws -> MetadataStore {
         let root = await resolveRoot()
         let url = try FinderADB.storeURL(forSerial: serial)
         let opened = try MetadataStore(path: url.path, deviceRoot: root)
-        store = opened
 
         // The root row is seeded with a placeholder mode, so its write
         // capability would otherwise be wrong: /storage/emulated/0 is drwxrws---
@@ -77,6 +105,9 @@ actor DeviceSession {
         let path = try store.path(of: container)
         let listing = try await list(directory: path)
         let result = try store.reconcile(directory: container, listing: listing)
+        // Watch what the user is actually looking at, rather than the whole
+        // tree: inotify is not recursive and its watch budget is finite.
+        await startWatcherIfNeeded().watch(path)
         if !result.isEmpty {
             Log.enumeration.debug("""
                 \(path, privacy: .public): +\(result.created.count) ~\(result.modified.count) \
@@ -193,5 +224,102 @@ actor DeviceSession {
         }
         let inserted = try store.insert(childOf: parent, entry: named)
         return (inserted, store.version(of: inserted))
+    }
+
+    // MARK: - Change tracking
+
+    /// Begins watching as soon as the extension exists.
+    ///
+    /// Arming only on enumeration is not enough: the system serves an already
+    /// materialised directory straight from its replica, so it may never ask us
+    /// anything — and a watcher that waits to be asked never starts. The root is
+    /// armed unconditionally; deeper directories are added as they are visited.
+    func beginWatching() async {
+        guard let store = try? await preparedStore() else {
+            Log.watch.error("cannot start watcher: store unavailable")
+            return
+        }
+        let root = (try? store.path(of: MetadataStore.rootID)) ?? FinderADB.defaultDeviceRoot
+        await startWatcherIfNeeded().watch(root)
+    }
+
+    private func startWatcherIfNeeded() -> InotifyWatcher {
+        if let watcher { return watcher }
+        let created = InotifyWatcher(client: client, selector: selector) { [weak self] paths in
+            await self?.deviceChanged(paths)
+        }
+        watcher = created
+        return created
+    }
+
+    /// A directory changed on the device: re-list it, fold the result into the
+    /// store, and tell the system to pick up the delta.
+    private func deviceChanged(_ paths: [String]) async {
+        guard let store else { return }
+        var touched: [ItemID] = []
+
+        for path in paths {
+            // A path we have never enumerated is nothing to update — the user
+            // has not looked there, and the next enumeration will be correct.
+            guard let item = try? store.item(atDevicePath: path), item.isDirectory else { continue }
+            do {
+                let listing = try await list(directory: path)
+                let result = try store.reconcile(directory: item.id, listing: listing)
+                if !result.isEmpty { touched.append(item.id) }
+            } catch {
+                Log.watch.error("rescan of \(path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        guard !touched.isEmpty else { return }
+        let manager = NSFileProviderManager(for: domain)
+        for id in touched {
+            Log.watch.info("signalling container \(id, privacy: .public)")
+            manager?.signalEnumerator(for: .init(itemID: id)) { error in
+                if let error {
+                    Log.watch.error("signal failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+    }
+
+    /// Replays the change log for one container.
+    ///
+    /// Deletions are looked up including tombstones, because a deletion still
+    /// has to be attributed to the container that lost the item.
+    func changes(since anchor: Int64,
+                 in container: ItemID) async throws -> (updated: [(StoredItem, ItemVersion)],
+                                                        deleted: [ItemID],
+                                                        anchor: Int64) {
+        let store = try await preparedStore()
+        let entries = try store.changes(since: anchor)
+
+        var updated: [(StoredItem, ItemVersion)] = []
+        var deleted: [ItemID] = []
+        var seen = Set<ItemID>()
+
+        // Newest wins: an item created and then modified within one batch should
+        // be reported once.
+        for change in entries.reversed() where seen.insert(change.itemID).inserted {
+            if change.kind == .deleted {
+                if let tombstone = try store.itemIncludingDeleted(change.itemID),
+                   tombstone.parentID == container {
+                    deleted.append(change.itemID)
+                }
+                continue
+            }
+            guard let item = try store.item(change.itemID) else {
+                deleted.append(change.itemID)
+                continue
+            }
+            guard item.parentID == container else { continue }
+            updated.append((item, store.version(of: item)))
+        }
+
+        return (updated, deleted, try store.currentAnchor())
+    }
+
+    func currentAnchor() async throws -> Int64 {
+        try await preparedStore().currentAnchor()
     }
 }

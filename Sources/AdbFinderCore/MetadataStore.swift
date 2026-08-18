@@ -148,6 +148,41 @@ public final class MetadataStore: @unchecked Sendable {
         }
     }
 
+    /// Resolves an absolute device path back to its item, if we know it.
+    ///
+    /// The watcher reports paths, not identifiers, so this is how a filesystem
+    /// event is matched to the tree we already track. Returns nil for anything
+    /// outside the domain root or not yet enumerated — both mean "nothing to
+    /// update", not an error.
+    public func item(atDevicePath path: String) throws -> StoredItem? {
+        guard path == deviceRoot || path.hasPrefix(deviceRoot + "/") else { return nil }
+        let relative = String(path.dropFirst(deviceRoot.count))
+        let components = relative.split(separator: "/").map(String.init)
+
+        return try lock.withLock {
+            var current = try database.queryOne(
+                Self.selectColumns + " WHERE id = ?1 AND deleted_at IS NULL",
+                [.integer(Self.rootID)], row: Self.decode)
+            for component in components {
+                guard let parent = current else { return nil }
+                current = try database.queryOne(
+                    Self.selectColumns + " WHERE parent_id = ?1 AND name = ?2 AND deleted_at IS NULL AND id != ?1",
+                    [.integer(parent.id), .text(component)], row: Self.decode)
+            }
+            return current
+        }
+    }
+
+    /// Looks up an item even after it has been tombstoned.
+    ///
+    /// Change replay needs this: a deletion must still be attributable to a
+    /// parent container, and by then the live row is gone.
+    public func itemIncludingDeleted(_ id: ItemID) throws -> StoredItem? {
+        try lock.withLock {
+            try database.queryOne(Self.selectColumns + " WHERE id = ?1", [.integer(id)], row: Self.decode)
+        }
+    }
+
     /// Content and metadata versions for `NSFileProviderItemVersion`.
     ///
     /// Known weakness: the sync protocol carries mtime in whole seconds, so two

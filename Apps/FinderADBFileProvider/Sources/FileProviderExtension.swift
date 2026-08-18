@@ -15,9 +15,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         self.session = DeviceSession(domain: domain)
         super.init()
         Log.domain.info("extension started for \(domain.identifier.rawValue, privacy: .public)")
+
+        let session = self.session
+        Task { await session.beginWatching() }
     }
 
     func invalidate() {
+        // The watcher holds a long-lived adb transport; leaving it running past
+        // invalidation would leak a connection per extension lifetime.
+        let session = self.session
+        Task { await session.shutdown() }
         Log.domain.info("extension invalidated for \(self.domain.identifier.rawValue, privacy: .public)")
     }
 

@@ -341,3 +341,37 @@ struct PersistenceTests {
         #expect(try reopened.path(of: identifier) == "\(root)/DCIM")
     }
 }
+
+@Suite("Path lookup")
+struct PathLookupTests {
+    @Test func resolvesAKnownPath() throws {
+        let store = try store()
+        try store.reconcile(directory: MetadataStore.rootID, listing: [entry("DCIM", dir: true, ino: 1)])
+        let dcim = try #require(try store.child(of: MetadataStore.rootID, named: "DCIM"))
+        try store.reconcile(directory: dcim.id, listing: [entry("a.jpg", ino: 2)])
+
+        #expect(try store.item(atDevicePath: "\(root)/DCIM")?.id == dcim.id)
+        #expect(try store.item(atDevicePath: "\(root)/DCIM/a.jpg")?.name == "a.jpg")
+        #expect(try store.item(atDevicePath: root)?.id == MetadataStore.rootID)
+    }
+
+    @Test func unknownOrOutsidePathsReturnNil() throws {
+        // The watcher reports whatever the device says; paths we do not track
+        // are simply nothing to do, not an error.
+        let store = try store()
+        #expect(try store.item(atDevicePath: "\(root)/never-enumerated") == nil)
+        #expect(try store.item(atDevicePath: "/data/local/tmp") == nil)
+        #expect(try store.item(atDevicePath: "/storage/emulated/0extra") == nil)
+    }
+
+    @Test func tombstonedItemsStayAttributable() throws {
+        let store = try store()
+        try store.reconcile(directory: MetadataStore.rootID, listing: [entry("gone.txt")])
+        let item = try #require(try store.child(of: MetadataStore.rootID, named: "gone.txt"))
+        try store.reconcile(directory: MetadataStore.rootID, listing: [])
+
+        #expect(try store.item(item.id) == nil)
+        // Change replay must still know which container lost the file.
+        #expect(try store.itemIncludingDeleted(item.id)?.parentID == MetadataStore.rootID)
+    }
+}
