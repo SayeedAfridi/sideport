@@ -87,9 +87,17 @@ targets:
           NSExtensionPointIdentifier: com.apple.fileprovider-nonui
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FileProviderExtension
           NSExtensionFileProviderDocumentGroup: NU2JM39S5P.dev.afridi.finderadb
-          # Q2: believed to be legacy-API only, harmless for replicated
-          # extensions. Kept until proven unnecessary.
+          # Q2 answered: iCloud Drive's own provider sets this, so it is
+          # current, not legacy.
           NSExtensionFileProviderSupportsEnumeration: true
+          # Without this the system creates an implicit *default* domain
+          # alongside ours, and Finder labels that one with the app's name —
+          # which is why the sidebar read "FinderADB" instead of the device.
+          # iCloud Drive disables it for the same reason.
+          NSFileProviderDefaultDomainEnabled: false
+          # Show the domain's own name in the sidebar rather than prefixing it
+          # with the provider's.
+          NSFileProviderHideExtensionName: true
     entitlements:
       path: Apps/FinderADBFileProvider/FinderADBFileProvider.entitlements
       properties:
