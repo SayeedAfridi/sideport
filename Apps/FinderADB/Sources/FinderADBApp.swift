@@ -48,16 +48,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         controller.start()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        // Leaving a domain behind would show a device in Finder that nothing is
-        // backing any more.
+    /// Async cleanup on quit, done the way AppKit actually supports it.
+    ///
+    /// The obvious version — spawn a `Task` in `applicationWillTerminate` and
+    /// block on a semaphore until it finishes — cannot work here and fails
+    /// silently. `applicationWillTerminate` runs on the main actor, an
+    /// unstructured `Task` inherits that isolation, and the semaphore is
+    /// holding the main actor hostage: the task cannot start until the wait
+    /// ends, and the wait cannot end until the task runs. Making
+    /// `removeAllDomains` `nonisolated` is not enough, because it is the task's
+    /// own body that is isolated, not just the function it calls.
+    ///
+    /// The visible consequence was every device staying in the Finder sidebar
+    /// after quitting, backed by nothing.
+    ///
+    /// `.terminateLater` is the supported answer: AppKit keeps the app alive,
+    /// off the main thread, until we say otherwise.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         controller.stop()
-        let semaphore = DispatchSemaphore(value: 0)
+
         Task {
+            // A device that stopped answering must not be able to prevent the
+            // app from quitting, so the reply is on a timer too.
+            let watchdog = Task {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
+                Log.domain.error("domain cleanup timed out; quitting anyway")
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+
             await DomainController.removeAllDomains(discardingReplica: false)
-            semaphore.signal()
+            watchdog.cancel()
+            Log.domain.info("domains removed; quitting")
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
-        _ = semaphore.wait(timeout: .now() + 3)
+
+        return .terminateLater
     }
 }
 

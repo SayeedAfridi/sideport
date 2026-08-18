@@ -251,7 +251,15 @@ final class DomainController: ObservableObject {
     /// means the system keeps its replica — and with it every cached item
     /// capability. A folder that has since become writable would still read as
     /// read-only, because Finder never asks us again.
-    static func removeAllDomains(discardingReplica: Bool = true) async {
+    /// `nonisolated` on purpose. This touches no controller state — only
+    /// `NSFileProviderManager` — and it is called from
+    /// `applicationWillTerminate`, which runs *on* the main thread and then
+    /// blocks it waiting for the result. Main-actor isolation there is a
+    /// deadlock: the task cannot start until the main actor is free, and the
+    /// main actor is not free until the task finishes. The three-second timeout
+    /// turned that into a silent no-op, so quitting left every device sitting
+    /// in the Finder sidebar with nothing behind it.
+    nonisolated static func removeAllDomains(discardingReplica: Bool = true) async {
         let registered = (try? await NSFileProviderManager.domains()) ?? []
         for domain in registered {
             if discardingReplica {
