@@ -31,6 +31,32 @@ struct SelfTest {
         }
     }
 
+    struct Verdict {
+        let ok: Bool
+        let detail: String
+    }
+
+    /// Runs `body`, expecting it to fail, and reports which errno the failure
+    /// resolves to. Carries the raw device text on mismatch — that text is the
+    /// evidence, and a mismatch means our table needs a new entry rather than
+    /// that the device is wrong.
+    ///
+    /// Non-mutating on purpose: recording the result has to be a separate
+    /// statement, because a closure that reaches back into `self` cannot run
+    /// while `check` is holding it exclusively.
+    func classify(_ code: Int32, _ body: () async throws -> Void) async -> Verdict {
+        do {
+            try await body()
+            return Verdict(ok: false, detail: "expected a failure, got success")
+        } catch let error as AdbError {
+            let resolved = error.posixCode
+            return Verdict(ok: resolved == code,
+                           detail: "resolved to \(resolved.map(String.init) ?? "nil") from \(error.localizedDescription.debugDescription)")
+        } catch {
+            return Verdict(ok: false, detail: "threw \(error)")
+        }
+    }
+
     mutating func run(in parent: String) async throws {
         let root = "\(parent)/adbkit-selftest"
         print("device:  \(selector)")
@@ -130,6 +156,58 @@ struct SelfTest {
         check("stdout captured", echo.stdout.contains("out"))
         check("stderr captured separately", echo.stderr.contains("err"), "stderr=\(echo.stderr.debugDescription)")
         check("exit code propagated", echo.exitCode == 7, "got \(echo.exitCode)")
+
+        // The failure-classification table in `DeviceErrno` is only worth
+        // anything if it was built against what this device actually says.
+        // These provoke real failures and check the recovered errno, so a
+        // vendor with different wording fails the selftest instead of silently
+        // degrading every error into "cannot synchronize".
+        print("\nerror classification")
+
+        let probe = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adbkit-errno-probe")
+        try Data("x".utf8).write(to: probe)
+        defer { try? FileManager.default.removeItem(at: probe) }
+
+        let readOnly = await classify(EROFS) {
+            // /system is mounted read-only on any device that is not rooted and
+            // remounted, which is the state a user's phone is in.
+            try await client.push(probe, to: "/system/adbkit-errno-probe", on: selector)
+        }
+        check("push to a read-only filesystem reads as EROFS", readOnly.ok, readOnly.detail)
+
+        let denied = await classify(EACCES) {
+            try await client.push(probe, to: "/data/data/adbkit-errno-probe", on: selector)
+        }
+        check("push into a protected directory reads as EACCES", denied.ok, denied.detail)
+
+        let sink = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adbkit-errno-sink")
+        defer { try? FileManager.default.removeItem(at: sink) }
+        let absent = await classify(ENOENT) {
+            // Pulled somewhere other than `probe`: a failed pull still
+            // truncates its destination, and the pushes above still need it.
+            _ = try await client.pull("\(root)/definitely-absent", to: sink, on: selector)
+        }
+        check("pull of a missing file reads as ENOENT", absent.ok, absent.detail)
+
+        let noParent = await classify(ENOENT) {
+            let command = "mkdir \(adbShellQuote("\(root)/absent-parent/child"))"
+            try await client.shell(command, on: selector).requireSuccess(command)
+        }
+        check("mkdir without its parent reads as ENOENT", noParent.ok, noParent.detail)
+
+        let notEmpty = await classify(ENOTEMPTY) {
+            let command = "rmdir \(adbShellQuote("\(root)/nested"))"
+            try await client.shell(command, on: selector).requireSuccess(command)
+        }
+        check("rmdir on a populated directory reads as ENOTEMPTY", notEmpty.ok, notEmpty.detail)
+
+        let unreadable = await classify(EACCES) {
+            let command = "cat /data/data"
+            try await client.shell(command, on: selector).requireSuccess(command)
+        }
+        check("reading a protected path reads as EACCES", unreadable.ok, unreadable.detail)
 
         print("\ncapacity")
         let free = try await client.availableCapacity(at: parent, on: selector)

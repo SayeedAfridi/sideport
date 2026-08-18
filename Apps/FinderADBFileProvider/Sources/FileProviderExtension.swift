@@ -210,6 +210,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 guard let id = identifier.itemID else { throw CoreError.itemNotFound(0) }
                 try await session.delete(id)
                 completionHandler(nil)
+            } catch where ProviderError.isAlreadyGone(error) {
+                // The device has already lost it, so the user's request is
+                // satisfied. Reporting an error here badges a folder that is in
+                // exactly the state that was asked for.
+                Log.write.debug("delete: already gone")
+                completionHandler(nil)
             } catch {
                 Log.write.error("delete failed: \(error.localizedDescription, privacy: .public)")
                 completionHandler(ProviderError.map(error))

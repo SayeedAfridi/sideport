@@ -230,7 +230,7 @@ public final class AdbSyncSession {
 
         let descriptor = open(localURL.path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
         guard descriptor >= 0 else {
-            throw AdbError.localIO("cannot create \(localURL.path): \(String(cString: strerror(errno)))")
+            throw AdbError.localIOFailure(errno, "cannot create \(localURL.path)")
         }
         var closed = false
         defer { if !closed { close(descriptor) } }
@@ -289,7 +289,7 @@ public final class AdbSyncSession {
             } else if written < 0 && errno == EINTR {
                 continue
             } else {
-                throw AdbError.localIO("write: \(String(cString: strerror(errno)))")
+                throw AdbError.localIOFailure(errno, "write")
             }
         }
     }
@@ -313,7 +313,7 @@ public final class AdbSyncSession {
 
         let descriptor = open(localURL.path, O_RDONLY)
         guard descriptor >= 0 else {
-            throw AdbError.localIO("cannot read \(localURL.path): \(String(cString: strerror(errno)))")
+            throw AdbError.localIOFailure(errno, "cannot read \(localURL.path)")
         }
         defer { close(descriptor) }
         // Read once, sequentially, and do not pollute the page cache with a file
@@ -342,7 +342,7 @@ public final class AdbSyncSession {
                     if count >= 0 || errno != EINTR { break }
                 }
                 guard count >= 0 else {
-                    throw AdbError.localIO("read: \(String(cString: strerror(errno)))")
+                    throw AdbError.localIOFailure(errno, "read")
                 }
                 if count == 0 { break }
 
