@@ -452,3 +452,24 @@ struct TransferReportingTests {
         #expect(stale.isStale)
     }
 }
+
+@Suite("Empty listings")
+struct EmptyListingTests {
+    @Test func anEmptyListingReallyDoesDeleteEverything() throws {
+        // Documenting the invariant rather than guarding it here: reconcile is
+        // right to take its listing at face value, because a user really can
+        // delete every file in a folder. What must never happen is an *untrue*
+        // empty listing reaching this point — and the sync protocol cannot tell
+        // "empty" from "could not open", so `AdbClient.list` probes before it
+        // reports nothing. If that probe is ever removed, this test keeps
+        // passing and the phone appears wiped; the guard belongs upstream.
+        let store = try store()
+        let listing = (0..<16).map { entry("file-\($0).bin") }
+        try store.reconcile(directory: MetadataStore.rootID, listing: listing)
+        #expect(try store.children(of: MetadataStore.rootID).count == 16)
+
+        let result = try store.reconcile(directory: MetadataStore.rootID, listing: [])
+        #expect(result.deleted.count == 16)
+        #expect(try store.children(of: MetadataStore.rootID).isEmpty)
+    }
+}

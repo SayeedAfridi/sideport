@@ -160,8 +160,32 @@ public final class AdbClient: Sendable {
         }
     }
 
+    /// Lists a directory, refusing to report "empty" when it means "unreadable".
+    ///
+    /// `adbd`'s sync `LIST` answers `DONE` with no entries when its `opendir`
+    /// fails, so on the wire an unreadable directory is byte-for-byte identical
+    /// to an empty one. Taking that at face value is not a cosmetic problem: the
+    /// reconciler would read zero entries as "everything here was deleted" and
+    /// tombstone the lot. A phone that is locked before its first unlock, or
+    /// mid-remount, or simply holding a directory that is not ours to read,
+    /// would present as a phone whose storage had been wiped.
+    ///
+    /// So an empty result gets a second look, and only an empty result — the
+    /// probe costs a shell round-trip and never runs on a directory that
+    /// returned anything.
     public func list(_ path: String, on selector: DeviceSelector) async throws -> [AdbFileEntry] {
-        try await withSyncSession(selector) { try $0.list(path) }
+        let entries = try await withSyncSession(selector) { try $0.list(path) }
+        if entries.isEmpty { try await confirmListable(path, on: selector) }
+        return entries
+    }
+
+    /// Throws unless `path` is a directory we can actually enumerate.
+    ///
+    /// `ls -A` performs the same `opendir` the sync service does but reports the
+    /// errno instead of swallowing it, which is the whole point.
+    private func confirmListable(_ path: String, on selector: DeviceSelector) async throws {
+        let command = "ls -A \(adbShellQuote(path)) >/dev/null"
+        try await shell(command, on: selector).requireSuccess(command)
     }
 
     public func stat(_ path: String,

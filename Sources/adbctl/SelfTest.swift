@@ -162,6 +162,24 @@ struct SelfTest {
         // These provoke real failures and check the recovered errno, so a
         // vendor with different wording fails the selftest instead of silently
         // degrading every error into "cannot synchronize".
+        // The sync protocol cannot tell "empty" from "I could not open it":
+        // `LIST` answers DONE either way. Reading the second as the first would
+        // have the reconciler tombstone every file on the phone.
+        print("\nempty versus unreadable")
+
+        let emptyDir = "\(root)/genuinely-empty"
+        try await client.makeDirectory(emptyDir, on: selector)
+        let empty = try await client.list(emptyDir, on: selector)
+        check("a genuinely empty directory lists as empty", empty.isEmpty)
+
+        let unlistable = await classify(EACCES) {
+            // /data/data exists and is full of subdirectories, none of which the
+            // shell user may see.
+            _ = try await client.list("/data/data", on: selector)
+        }
+        check("an unreadable directory fails instead of reporting empty",
+              unlistable.ok, unlistable.detail)
+
         print("\nerror classification")
 
         let probe = FileManager.default.temporaryDirectory
