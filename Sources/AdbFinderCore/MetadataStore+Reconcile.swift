@@ -67,12 +67,10 @@ extension MetadataStore {
             result.created.append(try insertLockedForReconcile(childOf: id, entry: entry, display: display))
         }
 
-        // Pass 4 — anything left unclaimed is gone.
+        // Pass 4 — anything left unclaimed is gone, along with everything under
+        // it. A directory deleted on the device takes its whole subtree.
         for (_, orphan) in byName where !claimed.contains(orphan.id) {
-            try db.run("UPDATE items SET deleted_at = ?2 WHERE id = ?1",
-                       [.integer(orphan.id), .integer(Int64(Date().timeIntervalSince1970))])
-            try appendChangeLocked(orphan.id, .deleted)
-            result.deleted.append(orphan.id)
+            result.deleted.append(contentsOf: try markDeletedLocked(orphan.id))
         }
         byName.removeAll()
 

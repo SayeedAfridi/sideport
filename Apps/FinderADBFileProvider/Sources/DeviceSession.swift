@@ -273,6 +273,15 @@ actor DeviceSession {
 
         guard !touched.isEmpty else { return }
         let manager = NSFileProviderManager(for: domain)
+
+        // The working set first: it is the only channel the system consults
+        // when no window is open on the changed folder.
+        manager?.signalEnumerator(for: .workingSet) { error in
+            if let error {
+                Log.watch.error("working set signal failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
         for id in touched {
             Log.watch.info("signalling container \(id, privacy: .public)")
             manager?.signalEnumerator(for: .init(itemID: id)) { error in
@@ -281,6 +290,32 @@ actor DeviceSession {
                 }
             }
         }
+    }
+
+    /// Domain-wide change replay for the working set: same as `changes(since:in:)`
+    /// but without filtering to one container.
+    func allChanges(since anchor: Int64) async throws -> (updated: [(StoredItem, ItemVersion)],
+                                                          deleted: [ItemID],
+                                                          anchor: Int64) {
+        let store = try await preparedStore()
+        let entries = try store.changes(since: anchor)
+
+        var updated: [(StoredItem, ItemVersion)] = []
+        var deleted: [ItemID] = []
+        var seen = Set<ItemID>()
+
+        for change in entries.reversed() where seen.insert(change.itemID).inserted {
+            if change.kind == .deleted {
+                deleted.append(change.itemID)
+                continue
+            }
+            guard let item = try store.item(change.itemID) else {
+                deleted.append(change.itemID)
+                continue
+            }
+            updated.append((item, store.version(of: item)))
+        }
+        return (updated, deleted, try store.currentAnchor())
     }
 
     /// Replays the change log for one container.

@@ -49,10 +49,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier,
                     request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
-        guard containerItemIdentifier != .workingSet,
-              containerItemIdentifier != .trashContainer else {
-            return EmptyEnumerator()
+        // The working set is the domain-wide delta channel: without it, changes
+        // made on the phone stay invisible until someone re-opens the folder.
+        if containerItemIdentifier == .workingSet {
+            return WorkingSetEnumerator(session: session)
         }
+        guard containerItemIdentifier != .trashContainer else { return EmptyEnumerator() }
         guard let id = containerItemIdentifier.itemID else {
             throw NSFileProviderError(.noSuchItem)
         }

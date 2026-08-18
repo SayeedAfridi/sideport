@@ -45,7 +45,7 @@ final class DirectoryEnumerator: NSObject, NSFileProviderEnumerator {
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
         Task { [session] in
             let anchor = (try? await session.currentAnchor()) ?? 0
-            completionHandler(Self.encode(anchor))
+            completionHandler(SyncAnchorCoding.encode(anchor))
         }
     }
 
@@ -53,7 +53,9 @@ final class DirectoryEnumerator: NSObject, NSFileProviderEnumerator {
                           from syncAnchor: NSFileProviderSyncAnchor) {
         work = Task { [session, container] in
             do {
-                let result = try await session.changes(since: Self.decode(syncAnchor), in: container)
+                let from = SyncAnchorCoding.decode(syncAnchor)
+                let result = try await session.changes(since: from, in: container)
+                Log.enumeration.info("changes for container \(container, privacy: .public) from anchor \(from, privacy: .public): \(result.updated.count, privacy: .public) updated, \(result.deleted.count, privacy: .public) deleted")
                 let rootFilename = session.rootFilename
 
                 if !result.updated.isEmpty {
@@ -66,7 +68,7 @@ final class DirectoryEnumerator: NSObject, NSFileProviderEnumerator {
                         NSFileProviderItemIdentifier(itemID: $0)
                     })
                 }
-                observer.finishEnumeratingChanges(upTo: Self.encode(result.anchor), moreComing: false)
+                observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(result.anchor), moreComing: false)
             } catch CoreError.anchorExpired {
                 // Correct, just slower: the system re-enumerates from scratch
                 // rather than trusting a delta we can no longer produce.
@@ -78,27 +80,93 @@ final class DirectoryEnumerator: NSObject, NSFileProviderEnumerator {
         }
     }
 
-    /// Anchors travel as opaque `Data`; ours is just the change-log row id.
-    private static func encode(_ anchor: Int64) -> NSFileProviderSyncAnchor {
-        NSFileProviderSyncAnchor(withUnsafeBytes(of: anchor.littleEndian) { Data($0) })
+}
+
+/// The domain-wide change feed.
+///
+/// Signalling a specific container only reaches a *live* enumerator — one Finder
+/// actually has open. The working set is how the system learns about changes
+/// when nothing is being looked at, so without it a photo taken on the phone
+/// stays invisible until someone happens to re-open the folder.
+///
+/// Its initial contents are deliberately empty: the working set is meant to hold
+/// recently-used items, and we have no reason to pin any. It exists here purely
+/// as the delta channel.
+final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
+    private let session: DeviceSession
+    private var work: Task<Void, Never>?
+
+    init(session: DeviceSession) {
+        self.session = session
     }
 
-    private static func decode(_ anchor: NSFileProviderSyncAnchor) -> Int64 {
-        let data = anchor.rawValue
-        guard data.count == MemoryLayout<Int64>.size else { return 0 }
-        return data.withUnsafeBytes { Int64(littleEndian: $0.loadUnaligned(as: Int64.self)) }
+    func invalidate() {
+        work?.cancel()
+        work = nil
+    }
+
+    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
+        observer.finishEnumerating(upTo: nil)
+    }
+
+    func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
+        Task { [session] in
+            let anchor = (try? await session.currentAnchor()) ?? 0
+            completionHandler(SyncAnchorCoding.encode(anchor))
+        }
+    }
+
+    func enumerateChanges(for observer: NSFileProviderChangeObserver,
+                          from syncAnchor: NSFileProviderSyncAnchor) {
+        work = Task { [session] in
+            do {
+                let from = SyncAnchorCoding.decode(syncAnchor)
+                let result = try await session.allChanges(since: from)
+                Log.enumeration.info("working-set changes from anchor \(from, privacy: .public): \(result.updated.count, privacy: .public) updated, \(result.deleted.count, privacy: .public) deleted")
+                let rootFilename = session.rootFilename
+
+                if !result.updated.isEmpty {
+                    observer.didUpdate(result.updated.map {
+                        ProviderItem($0.0, version: $0.1, rootFilename: rootFilename)
+                    })
+                }
+                if !result.deleted.isEmpty {
+                    observer.didDeleteItems(withIdentifiers: result.deleted.map {
+                        NSFileProviderItemIdentifier(itemID: $0)
+                    })
+                }
+                observer.finishEnumeratingChanges(upTo: SyncAnchorCoding.encode(result.anchor),
+                                                  moreComing: false)
+            } catch CoreError.anchorExpired {
+                observer.finishEnumeratingWithError(NSFileProviderError(.syncAnchorExpired))
+            } catch {
+                observer.finishEnumeratingWithError(ProviderError.map(error))
+            }
+        }
     }
 }
 
-/// Serves containers we do not model, such as the working set, without erroring.
+/// Serves containers we genuinely do not model, such as the trash.
 ///
-/// Throwing for the working set instead would make the system retry in a loop;
-/// enumerating nothing is the quiet, correct answer until M4 gives us real
-/// change tracking.
+/// Throwing instead would make the system retry in a loop; enumerating nothing
+/// is the quiet, correct answer.
 final class EmptyEnumerator: NSObject, NSFileProviderEnumerator {
     func invalidate() {}
 
     func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
         observer.finishEnumerating(upTo: nil)
+    }
+}
+
+/// Anchors travel as opaque `Data`; ours is just the change-log row id.
+enum SyncAnchorCoding {
+    static func encode(_ anchor: Int64) -> NSFileProviderSyncAnchor {
+        NSFileProviderSyncAnchor(withUnsafeBytes(of: anchor.littleEndian) { Data($0) })
+    }
+
+    static func decode(_ anchor: NSFileProviderSyncAnchor) -> Int64 {
+        let data = anchor.rawValue
+        guard data.count == MemoryLayout<Int64>.size else { return 0 }
+        return data.withUnsafeBytes { Int64(littleEndian: $0.loadUnaligned(as: Int64.self)) }
     }
 }

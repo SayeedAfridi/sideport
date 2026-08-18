@@ -375,3 +375,48 @@ struct PathLookupTests {
         #expect(try store.itemIncludingDeleted(item.id)?.parentID == MetadataStore.rootID)
     }
 }
+
+@Suite("Cascading deletion")
+struct CascadeTests {
+    @Test func deletingADirectoryTombstonesItsSubtree() throws {
+        // Leaving children live under a deleted parent makes the system refuse
+        // to retire the container, so the folder lingers in Finder.
+        let store = try store()
+        try store.reconcile(directory: MetadataStore.rootID, listing: [entry("dir", dir: true, ino: 1)])
+        let dir = try #require(try store.child(of: MetadataStore.rootID, named: "dir"))
+        try store.reconcile(directory: dir.id, listing: [entry("nested", dir: true, ino: 2), entry("a.txt", ino: 3)])
+        let nested = try #require(try store.child(of: dir.id, named: "nested"))
+        try store.reconcile(directory: nested.id, listing: [entry("deep.txt", ino: 4)])
+        let deep = try #require(try store.child(of: nested.id, named: "deep.txt"))
+
+        let result = try store.reconcile(directory: MetadataStore.rootID, listing: [])
+
+        #expect(result.deleted.count == 4, "got \(result.deleted.count)")
+        #expect(try store.item(dir.id) == nil)
+        #expect(try store.item(nested.id) == nil)
+        #expect(try store.item(deep.id) == nil)
+        #expect(try store.children(of: dir.id).isEmpty)
+    }
+
+    @Test func explicitDeleteAlsoCascades() throws {
+        let store = try store()
+        let dir = try store.insert(childOf: MetadataStore.rootID, entry: entry("d", dir: true))
+        let child = try store.insert(childOf: dir.id, entry: entry("c.txt"))
+
+        try store.markDeleted(dir.id)
+        #expect(try store.item(child.id) == nil)
+    }
+
+    @Test func deletionsReplayDeepestFirst() throws {
+        // A client replaying the log must not see a container disappear before
+        // the items it contained.
+        let store = try store()
+        let dir = try store.insert(childOf: MetadataStore.rootID, entry: entry("d", dir: true))
+        let child = try store.insert(childOf: dir.id, entry: entry("c.txt"))
+        let anchor = try store.currentAnchor()
+
+        try store.markDeleted(dir.id)
+        let order = try store.changes(since: anchor).map(\.itemID)
+        #expect(order.firstIndex(of: child.id)! < order.firstIndex(of: dir.id)!)
+    }
+}

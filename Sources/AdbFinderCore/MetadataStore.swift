@@ -282,10 +282,34 @@ public final class MetadataStore: @unchecked Sendable {
                           mode: entry.mode, dev: entry.dev, ino: entry.ino)
     }
 
-    private func markDeletedLocked(_ id: ItemID) throws {
-        try database.run("UPDATE items SET deleted_at = ?2 WHERE id = ?1",
-                         [.integer(id), .integer(Int64(Date().timeIntervalSince1970))])
-        try appendChangeLocked(id, .deleted)
+    /// Tombstones an item and everything beneath it.
+    ///
+    /// Cascading is not optional. Tombstoning only the directory leaves its
+    /// children as live rows pointing at a deleted parent, and the system will
+    /// not retire a container that still has live children — the folder stays
+    /// visible in Finder after being deleted on the device.
+    @discardableResult
+    func markDeletedLocked(_ id: ItemID) throws -> [ItemID] {
+        let subtree = try database.query("""
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id FROM items WHERE id = ?1 AND deleted_at IS NULL
+                UNION ALL
+                SELECT i.id FROM items i JOIN subtree ON i.parent_id = subtree.id
+                 WHERE i.id <> subtree.id AND i.deleted_at IS NULL
+            )
+            SELECT id FROM subtree
+            """, [.integer(id)]) { $0.int64(0) }
+
+        guard !subtree.isEmpty else { return [] }
+        let now = Int64(Date().timeIntervalSince1970)
+        // Deepest first, so a client replaying the log never sees a container
+        // vanish before the items it held.
+        for victim in subtree.reversed() {
+            try database.run("UPDATE items SET deleted_at = ?2 WHERE id = ?1",
+                             [.integer(victim), .integer(now)])
+            try appendChangeLocked(victim, .deleted)
+        }
+        return subtree
     }
 
     func appendChangeLocked(_ id: ItemID, _ kind: ChangeKind) throws {
