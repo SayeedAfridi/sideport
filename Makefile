@@ -1,4 +1,4 @@
-.PHONY: project build test app icon clean reset-domains preflight release
+.PHONY: project build test app icon clean reset-domains preflight release dmg
 
 project:            ## Regenerate FinderADB.xcodeproj from project.yml
 	xcodegen generate
@@ -24,6 +24,9 @@ preflight:          ## Report what is still missing before a signed release
 
 release:            ## Build, sign, notarize and staple FinderADB.dmg
 	./scripts/release.sh
+
+dmg:                ## Build a Release DMG signed for this Mac only
+	./scripts/build-local-dmg.sh
 
 clean:
 	rm -rf .build FinderADB.xcodeproj
