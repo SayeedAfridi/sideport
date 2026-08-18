@@ -11,5 +11,6 @@ let package = Package(
     targets: [
         .target(name: "AdbKit"),
         .executableTarget(name: "adbctl", dependencies: ["AdbKit"]),
+        .testTarget(name: "AdbKitTests", dependencies: ["AdbKit"]),
     ]
 )
