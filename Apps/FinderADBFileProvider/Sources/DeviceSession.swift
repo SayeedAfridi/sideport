@@ -277,10 +277,14 @@ actor DeviceSession {
         guard let store else { return }
         var touched: [ItemID] = []
 
+        var vanished: [String] = []
         for path in paths {
             // A path we have never enumerated is nothing to update — the user
             // has not looked there, and the next enumeration will be correct.
-            guard let item = try? store.item(atDevicePath: path), item.isDirectory else { continue }
+            guard let item = try? store.item(atDevicePath: path), item.isDirectory else {
+                vanished.append(path)
+                continue
+            }
             do {
                 let listing = try await list(directory: path)
                 let result = try store.reconcile(directory: item.id, listing: listing)
@@ -289,6 +293,10 @@ actor DeviceSession {
                 Log.watch.error("rescan of \(path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+
+        // A watched directory that no longer resolves has been deleted; leaving
+        // it armed would stop inotifyd starting at all.
+        if !vanished.isEmpty { await watcher?.unwatch(vanished) }
 
         guard !touched.isEmpty else { return }
         let manager = NSFileProviderManager(for: domain)

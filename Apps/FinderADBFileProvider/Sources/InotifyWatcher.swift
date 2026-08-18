@@ -26,8 +26,15 @@ actor InotifyWatcher {
     private var flushTask: Task<Void, Never>?
     private var pending: Set<String> = []
 
+    /// Only *short-lived* stream failures count. A stream that ran for a while
+    /// and then ended is a normal reconnect, not evidence of a broken device.
     private var consecutiveFailures = 0
     private var pollingFallback: Task<Void, Never>?
+    /// Bumped on every re-arm. A superseded stream must not trigger recovery:
+    /// counting an intentional restart as a failure drove the exponential
+    /// backoff up to 16s and then into the polling fallback, which is exactly
+    /// how a sub-second watcher turned into a ten-second one.
+    private var generation = 0
 
     /// Events we care about, in toybox's mask alphabet:
     /// `n` created · `c` modified · `d` deleted · `w` closed-writable ·
@@ -62,6 +69,22 @@ actor InotifyWatcher {
         scheduleRearm()
     }
 
+    /// Drops a directory that no longer exists.
+    ///
+    /// This is not housekeeping, it is correctness: `inotifyd` refuses to start
+    /// at all if any of its arguments is missing, so a single deleted folder
+    /// left in the set silently kills change detection for the whole device.
+    func unwatch(_ paths: [String]) {
+        var removed = false
+        for path in paths where watched.removeValue(forKey: path) != nil { removed = true }
+        // Anything beneath a removed directory is gone too.
+        for key in watched.keys where paths.contains(where: { key.hasPrefix($0 + "/") }) {
+            watched.removeValue(forKey: key)
+            removed = true
+        }
+        if removed { scheduleRearm() }
+    }
+
     func stop() {
         streamTask?.cancel(); streamTask = nil
         rearmTask?.cancel(); rearmTask = nil
@@ -81,37 +104,79 @@ actor InotifyWatcher {
     }
 
     private func restart() {
+        pollingFallback?.cancel()
+        pollingFallback = nil
+        generation += 1
+        let mine = generation
         streamTask?.cancel()
-        let paths = watched.keys.sorted()
-        guard !paths.isEmpty else { return }
+        guard !watched.isEmpty else { return }
 
         streamTask = Task { [weak self] in
-            await self?.runStream(paths: paths)
+            guard let self else { return }
+            // One round trip to drop paths the device no longer has. Cheaper
+            // than the 30s backoff that a single missing path would otherwise
+            // cost, and re-arming is debounced anyway.
+            let paths = await self.existingPaths(from: await self.watchedPaths())
+            guard !paths.isEmpty else { return }
+            await self.runStream(paths: paths, generation: mine)
         }
+    }
+
+    private func watchedPaths() -> [String] { watched.keys.sorted() }
+
+    /// Filters the watch set down to directories that still exist.
+    private func existingPaths(from candidates: [String]) async -> [String] {
+        guard !candidates.isEmpty else { return [] }
+        let probe = candidates
+            .map { "[ -d \(adbShellQuote($0)) ] && echo \(adbShellQuote($0))" }
+            .joined(separator: "; ")
+        guard let result = try? await client.shell(probe, on: selector) else { return candidates }
+
+        let alive = Set(result.stdout.split(separator: "\n").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        })
+        let gone = candidates.filter { !alive.contains($0) }
+        if !gone.isEmpty {
+            Log.watch.info("dropping \(gone.count, privacy: .public) watch(es) for missing directories")
+            for path in gone { watched.removeValue(forKey: path) }
+        }
+        return candidates.filter { alive.contains($0) }
     }
 
     // MARK: - Event stream
 
-    private func runStream(paths: [String]) async {
+    private func runStream(paths: [String], generation mine: Int) async {
         let spec = paths.map { "\(adbShellQuote($0)):\(Self.mask)" }.joined(separator: " ")
         Log.watch.info("arming \(paths.count, privacy: .public) watches")
+        let openedAt = Date()
+
+        // Re-arming tears the old stream down and builds a new one, and events
+        // landing in that gap are simply lost. Reconciling once on arm turns a
+        // silent hole into a bounded catch-up.
+        let catchUp = Task { [onChange] in await onChange(paths) }
 
         do {
             for try await line in client.shellLines("inotifyd - \(spec)", on: selector) {
-                guard !Task.isCancelled else { return }
-                consecutiveFailures = 0
+                guard !Task.isCancelled, mine == generation else { return }
                 handle(line: line, watched: paths)
             }
-            // A clean end means inotifyd exited — every watch became
-            // unwatchable, or the device went away.
             Log.watch.info("watcher stream ended")
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mine == generation else { return }
             Log.watch.error("watcher failed: \(error.localizedDescription, privacy: .public)")
         }
+        _ = await catchUp.value
 
-        guard !Task.isCancelled else { return }
-        consecutiveFailures += 1
+        // Superseded by a newer arm: that stream owns recovery now.
+        guard !Task.isCancelled, mine == generation else { return }
+
+        // A stream that survived a while was working; its ending is a reconnect,
+        // not a failure. Only rapid, repeated collapse means something is wrong.
+        if Date().timeIntervalSince(openedAt) > 10 {
+            consecutiveFailures = 0
+        } else {
+            consecutiveFailures += 1
+        }
         await recover()
     }
 
@@ -119,6 +184,7 @@ actor InotifyWatcher {
     private func handle(line: String, watched paths: [String]) {
         let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
         guard let event = fields.first, fields.count >= 2 else { return }
+        Log.watch.debug("event \(event, privacy: .public) in \(fields[1], privacy: .public)")
 
         // Overflow means the kernel dropped events, and unwatchable means a
         // watch died. Either way our incremental picture is untrustworthy, so
@@ -151,6 +217,7 @@ actor InotifyWatcher {
     }
 
     private func flush() async {
+        Log.watch.debug("flush of \(self.pending.count, privacy: .public) path(s)")
         let batch = pending
         pending.removeAll()
         guard !batch.isEmpty else { return }
@@ -162,8 +229,12 @@ actor InotifyWatcher {
 
     /// Reconnects with backoff, and gives up on push after repeated failures.
     private func recover() async {
-        let delay = min(30, Int(pow(2.0, Double(min(consecutiveFailures, 5)))))
-        Log.watch.info("retrying watcher in \(delay, privacy: .public)s")
+        // A healthy reconnect should be near-instant; only repeated failure
+        // earns a wait.
+        let delay = consecutiveFailures == 0
+            ? 0.2
+            : Double(min(30, Int(pow(2.0, Double(min(consecutiveFailures, 5))))))
+        Log.watch.info("reconnecting watcher in \(delay, privacy: .public)s (failures: \(self.consecutiveFailures, privacy: .public))")
         try? await Task.sleep(for: .seconds(delay))
         guard !Task.isCancelled else { return }
 
