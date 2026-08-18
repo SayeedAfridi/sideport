@@ -115,6 +115,43 @@ struct SelfTest {
         check("four operations on one session stay in sync",
               reuse == [2, 2, 1, 1], "got \(reuse)")
 
+        // Ranged reads go through `dd` over the shell, because the sync
+        // protocol has no way to ask for part of a file. That makes binary
+        // safety the thing to prove: a byte the framing mangles would show up
+        // here and nowhere else.
+        print("\nranged reads")
+
+        let wholeAgain = try await client.readRange(remote, offset: 0,
+                                                    length: payload.count, on: selector)
+        check("a full-length range matches the file", wholeAgain == payload,
+              "got \(wholeAgain.count) of \(payload.count) bytes")
+
+        let middle = try await client.readRange(remote, offset: 100_000, length: 4096, on: selector)
+        check("an interior range is byte-exact",
+              middle == payload.subdata(in: 100_000..<104_096))
+
+        let tail = try await client.readRange(remote, offset: Int64(payload.count - 100),
+                                              length: 100, on: selector)
+        check("a range at the very end is byte-exact",
+              tail == payload.suffix(100))
+
+        // Every byte value appears in the payload, so this covers the ones a
+        // line-oriented or text-decoding path would corrupt: 0x00, 0x0A, 0x0D.
+        let newlineHeavy = try await client.readRange(remote, offset: 0, length: 1024, on: selector)
+        check("bytes a text path would mangle survive", newlineHeavy == payload.prefix(1024),
+              "0x0A/0x0D/0x00 round trip")
+
+        let past = try await client.readRange(remote, offset: Int64(payload.count) + 5000,
+                                              length: 1024, on: selector)
+        check("reading past the end yields nothing rather than failing", past.isEmpty)
+
+        let clipped = try await client.readRange(remote, offset: Int64(payload.count - 50),
+                                                 length: 4096, on: selector)
+        check("a range overlapping the end is clipped, not padded", clipped.count == 50)
+
+        let zeroLength = try await client.readRange(remote, offset: 0, length: 0, on: selector)
+        check("a zero-length range costs no round trip", zeroLength.isEmpty)
+
         print("\nawkward names")
         let tricky = "\(root)/a file 'with' quotes & $pace.txt"
         try await client.withSyncSession(selector) { session in

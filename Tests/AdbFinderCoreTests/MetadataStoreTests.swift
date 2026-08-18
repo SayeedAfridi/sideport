@@ -427,7 +427,16 @@ struct TransferReportingTests {
         // AdbKit reports cumulative progress per transfer. Treating those as
         // deltas made a 40 MB copy claim 13.4 GB, so each transfer reports its
         // own running total and the reporter sums across them.
-        let reporter = TransferReporter(serial: "unit-test-\(UUID().uuidString)")
+        // The reporter takes a real path in the shared container, so the test
+        // has to tidy up after itself: without this each run left a directory
+        // behind, and thirteen of them had accumulated before anyone looked.
+        let serial = "unit-test-\(UUID().uuidString)"
+        defer {
+            if let store = try? FinderADB.storeURL(forSerial: serial) {
+                try? FileManager.default.removeItem(at: store.deletingLastPathComponent())
+            }
+        }
+        let reporter = TransferReporter(serial: serial)
         let first = reporter.begin()
         let second = reporter.begin()
 

@@ -173,6 +173,33 @@ actor DeviceSession {
 
     // MARK: - Contents
 
+    /// Per-item read history, so a reader that is streaming can be recognised
+    /// as such. Kept on the session because it must outlive one fetch.
+    private var fetchHistory: [ItemID: PartialFetchPlan.History] = [:]
+
+    /// Decides how much to fetch for a partial read, and remembers the answer.
+    func planPartialFetch(_ id: ItemID,
+                          wanted: NSRange,
+                          alignment: Int,
+                          fileSize: Int64) -> PartialFetchPlan.Decision {
+        let (decision, next) = PartialFetchPlan.plan(for: wanted,
+                                                     alignment: alignment,
+                                                     fileSize: fileSize,
+                                                     history: fetchHistory[id] ?? .init())
+        switch decision {
+        case .wholeFile: fetchHistory.removeValue(forKey: id)
+        case .range: fetchHistory[id] = next
+        }
+        return decision
+    }
+
+    /// Reads part of a file without materialising the rest of it.
+    func readRange(_ id: ItemID, offset: Int64, length: Int) async throws -> Data {
+        let store = try await preparedStore()
+        let path = try store.path(of: id)
+        return try await client.readRange(path, offset: offset, length: length, on: selector)
+    }
+
     func pull(_ id: ItemID, to destination: URL,
               progress: @escaping @Sendable (Int64) throws -> Void) async throws {
         let store = try await preparedStore()

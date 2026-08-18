@@ -365,13 +365,13 @@ public final class AdbClient: Sendable {
 
     // MARK: - Plumbing
 
-    private func connect() throws -> AdbConnection {
+    internal func connect() throws -> AdbConnection {
         try AdbConnection(endpoint: endpoint)
     }
 
     /// Hops blocking socket work off the Swift cooperative pool, which must
     /// never be blocked or the whole concurrency runtime can stall.
-    private func run<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+    internal func run<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             gate.addOperation {
                 continuation.resume(with: Result { try body() })

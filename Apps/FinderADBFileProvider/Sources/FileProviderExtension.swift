@@ -7,8 +7,8 @@ import FileProvider
 /// logic belongs in `AdbFinderCore`, where it can be tested without a domain
 /// registered and without Finder in the loop.
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
-    private let domain: NSFileProviderDomain
-    private let session: DeviceSession
+    let domain: NSFileProviderDomain
+    let session: DeviceSession
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
@@ -237,7 +237,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     ///
     /// So the fallback is kept, because failing a download over a temporary
     /// directory would be worse, but it is no longer silent.
-    private static func temporaryURL(for domain: NSFileProviderDomain, name: String) -> URL {
+    static func temporaryURL(for domain: NSFileProviderDomain, name: String) -> URL {
         let directory: URL
         do {
             guard let manager = NSFileProviderManager(for: domain) else {
