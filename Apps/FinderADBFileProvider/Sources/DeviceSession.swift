@@ -14,6 +14,9 @@ actor DeviceSession {
     nonisolated let rootFilename: String
 
     private let client = AdbClient()
+    /// Lets the menu bar answer "is anything still going on?" without a window.
+    /// Finder shows per-copy progress already; this is the different question.
+    private let transfers: TransferReporter
     private var store: MetadataStore?
     private var deviceRoot: String?
     private var opening: Task<MetadataStore, Error>?
@@ -22,6 +25,7 @@ actor DeviceSession {
 
     init(domain: NSFileProviderDomain) {
         self.domain = domain
+        self.transfers = TransferReporter(serial: domain.identifier.rawValue)
         serial = domain.identifier.rawValue
         selector = .serial(domain.identifier.rawValue)
         rootFilename = domain.displayName
@@ -148,7 +152,12 @@ actor DeviceSession {
         let store = try await preparedStore()
         let path = try store.path(of: id)
         Log.fetch.info("pulling \(path, privacy: .public)")
-        try await client.pull(path, to: destination, on: selector, progress: progress)
+        let token = transfers.begin()
+        defer { token.finish() }
+        try await client.pull(path, to: destination, on: selector) { sent in
+            token.report(sent)
+            try progress(sent)
+        }
     }
 
     // MARK: - Writes
@@ -168,7 +177,12 @@ actor DeviceSession {
         let store = try await preparedStore()
         let path = try store.path(of: parent) + "/" + name
         Log.write.info("create \(path, privacy: .public)")
-        try await client.pushAtomically(source, to: path, on: selector, progress: progress)
+        let token = transfers.begin()
+        defer { token.finish() }
+        try await client.pushAtomically(source, to: path, on: selector) { sent in
+            token.report(sent)
+            try progress(sent)
+        }
         return try await record(path: path, name: name, in: parent, store: store)
     }
 
@@ -178,7 +192,12 @@ actor DeviceSession {
         let store = try await preparedStore()
         let path = try store.path(of: id)
         Log.write.info("write \(path, privacy: .public)")
-        try await client.pushAtomically(source, to: path, on: selector, progress: progress)
+        let token = transfers.begin()
+        defer { token.finish() }
+        try await client.pushAtomically(source, to: path, on: selector) { sent in
+            token.report(sent)
+            try progress(sent)
+        }
 
         let entry = try await client.stat(path, on: selector)
         try store.update(id, from: entry)

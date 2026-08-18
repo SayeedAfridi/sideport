@@ -316,12 +316,23 @@ public final class AdbClient: Sendable {
         try await shell(command, on: selector).requireSuccess(command)
     }
 
-    /// Free bytes on the volume containing `path`, for Finder's capacity display.
-    public func availableCapacity(at path: String, on selector: DeviceSelector) async throws -> Int64? {
+    /// Total and free bytes on the volume containing `path`.
+    ///
+    /// `-P` forces the POSIX single-line format; without it a long device name
+    /// wraps onto its own line and the columns no longer line up.
+    public func capacity(at path: String,
+                         on selector: DeviceSelector) async throws -> (total: Int64, free: Int64)? {
         let result = try await shell("df -kP \(adbShellQuote(path)) | tail -1", on: selector)
         let fields = result.stdout.split(whereSeparator: \.isWhitespace)
-        guard fields.count >= 4, let kilobytes = Int64(fields[3]) else { return nil }
-        return kilobytes * 1024
+        guard fields.count >= 4,
+              let totalKB = Int64(fields[1]),
+              let freeKB = Int64(fields[3]) else { return nil }
+        return (totalKB * 1024, freeKB * 1024)
+    }
+
+    /// Free bytes on the volume containing `path`, for Finder's capacity display.
+    public func availableCapacity(at path: String, on selector: DeviceSelector) async throws -> Int64? {
+        try await capacity(at: path, on: selector)?.free
     }
 
     // MARK: - Plumbing

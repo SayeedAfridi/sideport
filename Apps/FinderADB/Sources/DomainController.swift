@@ -10,9 +10,26 @@ import Foundation
 /// The domain identifier is the device serial, so a phone that is unplugged and
 /// replugged reuses its metadata store instead of renumbering every file. The
 /// *display name* is separate and is what Finder shows in the sidebar.
+/// What we can tell the user about one attached device.
+struct DeviceStatus: Sendable, Equatable {
+    var totalBytes: Int64?
+    var freeBytes: Int64?
+    var activity = TransferActivity()
+
+    var capacityDescription: String? {
+        guard let freeBytes, let totalBytes, totalBytes > 0 else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return "\(formatter.string(fromByteCount: freeBytes)) free of \(formatter.string(fromByteCount: totalBytes))"
+    }
+}
+
 @MainActor
 final class DomainController: ObservableObject {
     @Published private(set) var devices: [AdbDevice] = []
+    @Published private(set) var statuses: [String: DeviceStatus] = [:]
+    /// Nil until we have looked; empty string never — see `AdbServerController`.
+    @Published private(set) var adbBinaryPath: String?
     @Published private(set) var serverReachable = false
     @Published private(set) var lastError: String?
     /// True when macOS has the extension switched off. Browsing still works in
@@ -22,19 +39,57 @@ final class DomainController: ObservableObject {
     @Published private(set) var needsUserEnable = false
 
     private let client = AdbClient()
+    private let server = AdbServerController()
+    private let preferences = Preferences()
     private var watcher: Task<Void, Never>?
+    private var poller: Task<Void, Never>?
     /// Resolved once per device: it costs a shell round trip and cannot change
     /// while the device stays plugged in.
     private var friendlyNames: [String: String] = [:]
 
     func start() {
         guard watcher == nil else { return }
+        adbBinaryPath = server.binaryPath
         watcher = Task { await watch() }
+        poller = Task { await pollActivity() }
     }
 
     func stop() {
-        watcher?.cancel()
-        watcher = nil
+        watcher?.cancel(); watcher = nil
+        poller?.cancel(); poller = nil
+    }
+
+    /// Starts the shared adb server. Never a private one on a private port:
+    /// Android Studio and the command line must keep working alongside us.
+    func startAdbServer() async {
+        guard await server.startServer() else { return }
+        // The watch loop is sitting in its retry backoff; nudge it.
+        stop()
+        start()
+    }
+
+    func revealAdbBinary() { server.revealBinary() }
+
+    /// Re-resolves display names and re-registers domains whose label changed.
+    /// Used when the naming preference is switched.
+    func refreshNames() {
+        friendlyNames.removeAll()
+        let snapshot = devices
+        Task { await apply(snapshot) }
+    }
+
+    /// Transfer activity is written by the extension, so it can only be polled.
+    /// A second is frequent enough for a menu nobody stares at.
+    private func pollActivity() async {
+        while !Task.isCancelled {
+            for device in devices where device.state.isUsable {
+                let activity = TransferReporter.read(serial: device.serial)
+                if statuses[device.serial]?.activity != activity {
+                    statuses[device.serial, default: DeviceStatus()].activity = activity
+                }
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
     }
 
     /// Follows the adb server's own hot-plug stream, reconnecting if the server
@@ -53,6 +108,13 @@ final class DomainController: ObservableObject {
                 serverReachable = false
                 lastError = (error as? AdbError)?.errorDescription ?? error.localizedDescription
                 Log.domain.error("device stream failed: \(self.lastError ?? "", privacy: .public)")
+
+                // A missing server is the ordinary case, not a failure: another
+                // tool may have run `adb kill-server`, or nothing started one yet.
+                if (error as? AdbError)?.isServerNotRunning == true,
+                   preferences.startServerAutomatically {
+                    _ = await server.startServer()
+                }
             }
             guard !Task.isCancelled else { return }
             try? await Task.sleep(for: .seconds(2))
@@ -102,6 +164,9 @@ final class DomainController: ObservableObject {
             Log.domain.info("removed domain \(domain.identifier.rawValue, privacy: .public)")
         }
 
+        statuses = statuses.filter { key, _ in usable.contains { $0.serial == key } }
+        for device in usable { await refreshCapacity(for: device) }
+
         await checkUserEnabled()
     }
 
@@ -121,6 +186,15 @@ final class DomainController: ObservableObject {
         needsUserEnable = live.contains { !$0.userEnabled }
     }
 
+    /// Where Finder mounts a device, so the menu can open it directly.
+    func revealInFinder(_ device: AdbDevice) {
+        let name = (friendlyNames[device.serial] ?? device.displayName)
+            .replacingOccurrences(of: " ", with: "")
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/CloudStorage/FinderADB-\(name)")
+        NSWorkspace.shared.open(url)
+    }
+
     /// Opens the pane holding the File Providers switch.
     func openExtensionSettings() {
         let candidates = [
@@ -133,9 +207,20 @@ final class DomainController: ObservableObject {
         }
     }
 
+    /// Free and total space, refreshed when a device appears. It changes slowly
+    /// enough that polling it would be noise.
+    private func refreshCapacity(for device: AdbDevice) async {
+        guard statuses[device.serial]?.totalBytes == nil else { return }
+        guard let capacity = try? await client.capacity(at: FinderADB.defaultDeviceRoot,
+                                                        on: .serial(device.serial)) else { return }
+        statuses[device.serial, default: DeviceStatus()].totalBytes = capacity.total
+        statuses[device.serial, default: DeviceStatus()].freeBytes = capacity.free
+    }
+
     /// What the device calls itself, falling back to the model string that
     /// `devices-l` reports — which is often a bare part number.
     private func friendlyName(for device: AdbDevice) async -> String {
+        if preferences.sidebarNaming == .model { return device.displayName }
         if let cached = friendlyNames[device.serial] { return cached }
         let resolved = (try? await client.deviceName(for: .serial(device.serial))) ?? nil
         let name = resolved ?? device.displayName
