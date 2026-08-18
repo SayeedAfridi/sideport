@@ -99,26 +99,45 @@ actor InotifyWatcher {
         rearmTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
-            await self?.restart()
+            await self?.restart(catchUp: false)
         }
     }
 
-    private func restart() {
+    /// Arms the watch set, handing over from whatever stream is already running.
+    ///
+    /// `catchUp` reconciles every watched directory once the stream is up. That
+    /// is worth its cost only when there was a real gap — after a failure, or on
+    /// the first arm — and ruinous otherwise: every directory the user opens
+    /// re-arms, so catching up on each one re-listed every directory watched so
+    /// far. Browsing 55 directories took 36 s that way, almost all of it
+    /// re-listing folders nothing had happened in.
+    ///
+    /// A deliberate re-arm has no gap to cover, because the outgoing stream
+    /// keeps reporting until the incoming one is established.
+    private func restart(catchUp: Bool) {
         pollingFallback?.cancel()
         pollingFallback = nil
         generation += 1
         let mine = generation
-        streamTask?.cancel()
-        guard !watched.isEmpty else { return }
+
+        guard !watched.isEmpty else {
+            streamTask?.cancel()
+            streamTask = nil
+            return
+        }
+
+        let outgoing = streamTask
+        let needsCatchUp = catchUp || outgoing == nil
 
         streamTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self else { outgoing?.cancel(); return }
             // One round trip to drop paths the device no longer has. Cheaper
             // than the 30s backoff that a single missing path would otherwise
             // cost, and re-arming is debounced anyway.
             let paths = await self.existingPaths(from: await self.watchedPaths())
-            guard !paths.isEmpty else { return }
-            await self.runStream(paths: paths, generation: mine)
+            guard !paths.isEmpty else { outgoing?.cancel(); return }
+            await self.runStream(paths: paths, generation: mine,
+                                 catchUp: needsCatchUp, outgoing: outgoing)
         }
     }
 
@@ -145,30 +164,47 @@ actor InotifyWatcher {
 
     // MARK: - Event stream
 
-    private func runStream(paths: [String], generation mine: Int) async {
+    private func runStream(paths: [String], generation mine: Int,
+                          catchUp: Bool, outgoing: Task<Void, Never>?) async {
         let spec = paths.map { "\(adbShellQuote($0)):\(Self.mask)" }.joined(separator: " ")
         Log.watch.info("arming \(paths.count, privacy: .public) watches")
         let openedAt = Date()
 
-        // Re-arming tears the old stream down and builds a new one, and events
-        // landing in that gap are simply lost. Reconciling once on arm turns a
-        // silent hole into a bounded catch-up.
-        let catchUp = Task { [onChange] in await onChange(paths) }
+        // Hand over rather than swap: the outgoing stream keeps reporting until
+        // this one is established. Its events are still real events, and a
+        // duplicate costs nothing because `pending` is a set — whereas a gap
+        // costs a change nobody ever hears about.
+        let handover = Task {
+            try? await Task.sleep(for: .milliseconds(750))
+            outgoing?.cancel()
+        }
+        let catchUpTask: Task<Void, Never>? = catchUp
+            ? Task { [onChange] in await onChange(paths) }
+            : nil
 
+        var superseded = false
         do {
             for try await line in client.shellLines("inotifyd - \(spec)", on: selector) {
-                guard !Task.isCancelled, mine == generation else { return }
+                // Deliberately not gated on `generation`: while a successor is
+                // starting up this stream is still the one holding the fort.
+                if Task.isCancelled { superseded = true; break }
                 handle(line: line, watched: paths)
             }
-            Log.watch.info("watcher stream ended")
+            if !Task.isCancelled { Log.watch.info("watcher stream ended") }
         } catch {
-            guard !Task.isCancelled, mine == generation else { return }
-            Log.watch.error("watcher failed: \(error.localizedDescription, privacy: .public)")
+            if Task.isCancelled || mine != generation {
+                superseded = true
+            } else {
+                Log.watch.error("watcher failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
-        _ = await catchUp.value
+
+        handover.cancel()
+        outgoing?.cancel()
+        _ = await catchUpTask?.value
 
         // Superseded by a newer arm: that stream owns recovery now.
-        guard !Task.isCancelled, mine == generation else { return }
+        guard !superseded, !Task.isCancelled, mine == generation else { return }
 
         // A stream that survived a while was working; its ending is a reconnect,
         // not a failure. Only rapid, repeated collapse means something is wrong.
@@ -242,7 +278,8 @@ actor InotifyWatcher {
             startPollingFallback()
             return
         }
-        restart()
+        // A recovery *did* have a gap, so this one earns its catch-up.
+        restart(catchUp: true)
     }
 
     /// Used when `inotifyd` is missing or refused — older devices, or a locked

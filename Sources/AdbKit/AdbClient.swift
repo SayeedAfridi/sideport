@@ -183,7 +183,11 @@ public final class AdbClient: Sendable {
     ///
     /// `ls -A` performs the same `opendir` the sync service does but reports the
     /// errno instead of swallowing it, which is the whole point.
-    private func confirmListable(_ path: String, on selector: DeviceSelector) async throws {
+    ///
+    /// Public because callers that drive `AdbSyncSession.list` directly — to
+    /// keep several operations on one session — bypass `list(_:on:)` and would
+    /// otherwise inherit the very ambiguity this exists to remove.
+    public func confirmListable(_ path: String, on selector: DeviceSelector) async throws {
         let command = "ls -A \(adbShellQuote(path)) >/dev/null"
         try await shell(command, on: selector).requireSuccess(command)
     }

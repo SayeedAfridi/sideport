@@ -105,13 +105,27 @@ actor DeviceSession {
     /// should see. Tuples of `Sendable` values cross the actor boundary; the
     /// `NSFileProviderItem` objects are built by the caller.
     func enumerate(_ container: ItemID) async throws -> [(StoredItem, ItemVersion)] {
+        let began = DispatchTime.now()
         let store = try await preparedStore()
+        let opened = DispatchTime.now()
         let path = try store.path(of: container)
         let listing = try await list(directory: path)
+        let listed = DispatchTime.now()
         let result = try store.reconcile(directory: container, listing: listing)
+        let reconciled = DispatchTime.now()
         // Watch what the user is actually looking at, rather than the whole
         // tree: inotify is not recursive and its watch budget is finite.
         await startWatcherIfNeeded().watch(path)
+        let armed = DispatchTime.now()
+        func ms(_ a: DispatchTime, _ b: DispatchTime) -> Double {
+            Double(b.uptimeNanoseconds - a.uptimeNanoseconds) / 1_000_000
+        }
+        Log.enumeration.debug("""
+            timing \(path, privacy: .public): store=\(ms(began, opened), privacy: .public) \
+            list=\(ms(opened, listed), privacy: .public) \
+            reconcile=\(ms(listed, reconciled), privacy: .public) \
+            watch=\(ms(reconciled, armed), privacy: .public)
+            """)
         if !result.isEmpty {
             Log.enumeration.debug("""
                 \(path, privacy: .public): +\(result.created.count) ~\(result.modified.count) \
@@ -130,6 +144,18 @@ actor DeviceSession {
     /// One sync session serves the listing *and* every symlink resolution in it,
     /// rather than paying a TCP connect and transport handshake per entry.
     private func list(directory path: String) async throws -> [AdbFileEntry] {
+        let entries = try await listOnOneSession(path)
+        // `LIST` answers DONE with no entries when its opendir fails, so an
+        // unreadable directory and an empty one are identical on the wire. This
+        // is the path enumeration and reconciliation both take, and reading the
+        // first as the second would tombstone every file under it.
+        if entries.isEmpty { try await client.confirmListable(path, on: selector) }
+        return entries
+    }
+
+    /// Kept on a single sync session so a symlink's target can be stat'd without
+    /// paying for a second connection.
+    private func listOnOneSession(_ path: String) async throws -> [AdbFileEntry] {
         try await client.withSyncSession(selector) { session in
             try session.list(path).map { entry in
                 // Listings are lstat-shaped, so a symlink to a folder would
