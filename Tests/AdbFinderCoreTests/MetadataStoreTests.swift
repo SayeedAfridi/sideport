@@ -212,7 +212,7 @@ struct CaseCollisionTests {
 
     @Test func nonCollidingNamesAreUntouched() throws {
         let resolved = DisplayName.resolve(["a.txt", "b.txt"])
-        #expect(resolved == ["a.txt": "a.txt", "b.txt": "b.txt"])
+        #expect(resolved == [ExactName("a.txt"): "a.txt", ExactName("b.txt"): "b.txt"])
     }
 }
 

@@ -27,7 +27,11 @@ extension MetadataStore {
 
         let existing = try db.query(Self.selectColumns + " WHERE parent_id = ?1 AND deleted_at IS NULL AND id != ?1",
                                     [.integer(id)], row: Self.decode)
-        var byName = [String: StoredItem](uniqueKeysWithValues: existing.map { ($0.name, $0) })
+        // Keyed by exact bytes, and built by hand: `uniqueKeysWithValues` would
+        // trap on two names that differ only by Unicode normalisation, and a
+        // trap here takes the whole extension down.
+        var byName: [ExactName: StoredItem] = [:]
+        for item in existing { byName[ExactName(item.name)] = item }
 
         // Display names depend on the whole directory, so they are resolved once
         // over the incoming listing rather than per entry.
@@ -37,10 +41,11 @@ extension MetadataStore {
         var claimed = Set<ItemID>()
 
         for entry in listing {
-            let display = displayNames[entry.name] ?? entry.name
+            let exact = ExactName(entry.name)
+            let display = displayNames[exact] ?? entry.name
 
             // Pass 1 — same name in the same directory.
-            if let current = byName[entry.name] {
+            if let current = byName[exact] {
                 claimed.insert(current.id)
                 if let updated = try applyIfChanged(current, entry: entry, display: display, parent: id) {
                     result.modified.append(updated)

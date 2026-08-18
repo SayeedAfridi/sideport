@@ -6,25 +6,34 @@ import Foundation
 /// and `A.txt` can genuinely coexist in one Android directory, and presenting
 /// both unchanged would let one silently shadow the other in Finder. We keep the
 /// true name for talking to the device and disambiguate only what is displayed.
+///
+/// The same applies to Unicode normalisation, which is why the *result* is keyed
+/// by `ExactName`: `café` in NFC and NFD are two files on the phone but one name
+/// to both Swift and APFS. Grouping still uses ordinary string equality, because
+/// grouping is exactly what we want — it is only the lookup afterwards that has
+/// to tell the two apart.
 enum DisplayName {
     /// Maps true name → display name for one directory's worth of entries.
     ///
     /// Ordering is by exact name so the result is stable across enumerations:
     /// the same file must not swap display names between refreshes.
-    static func resolve(_ names: [String]) -> [String: String] {
+    static func resolve(_ names: [String]) -> [ExactName: String] {
         var groups: [String: [String]] = [:]
         for name in names {
             groups[name.lowercased(), default: []].append(name)
         }
 
-        var result: [String: String] = [:]
+        var result: [ExactName: String] = [:]
         for (_, collided) in groups {
             guard collided.count > 1 else {
-                result[collided[0]] = collided[0]
+                result[ExactName(collided[0])] = collided[0]
                 continue
             }
-            for (offset, name) in collided.sorted().enumerated() {
-                result[name] = offset == 0 ? name : suffixed(name, offset + 1)
+            // Byte order, so a file keeps its suffix across refreshes even when
+            // the collision is a normalisation one and `sorted()` would be free
+            // to return either order.
+            for (offset, name) in collided.sorted(by: ExactName.precedes).enumerated() {
+                result[ExactName(name)] = offset == 0 ? name : suffixed(name, offset + 1)
             }
         }
         return result
