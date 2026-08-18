@@ -12,6 +12,9 @@ public enum CoreError: Error, Sendable {
     /// from scratch. Correct, just slower — this is the safety valve that stops
     /// a bad incremental state from becoming permanent.
     case anchorExpired
+    /// The App Group container is unreachable — almost always a missing or
+    /// misspelled `com.apple.security.application-groups` entitlement.
+    case appGroupUnavailable(String)
 }
 
 extension CoreError: LocalizedError {
@@ -21,6 +24,8 @@ extension CoreError: LocalizedError {
         case .itemNotFound(let id): return "No item with identifier \(id)."
         case .notADirectory(let id): return "Item \(id) is not a directory."
         case .anchorExpired: return "Sync anchor is older than the retained change log."
+        case .appGroupUnavailable(let group):
+            return "App Group \(group) is unavailable. Check the application-groups entitlement."
         }
     }
 }
@@ -42,6 +47,16 @@ public struct StoredItem: Sendable, Hashable, Identifiable {
     public let ino: UInt64?
 
     public var isRoot: Bool { id == MetadataStore.rootID }
+
+    private static let formatMask: UInt32 = 0o170000
+
+    /// True only for an unresolved link. Enumeration resolves symlinks to their
+    /// targets, so this is normally false by the time Finder sees an item.
+    public var isSymlink: Bool { mode & Self.formatMask == 0o120000 }
+    public var isRegularFile: Bool { mode & Self.formatMask == 0o100000 }
+    public var posixPermissions: UInt16 { UInt16(mode & 0o7777) }
+    /// Dotfiles are hidden on Android exactly as they are on macOS.
+    public var isHidden: Bool { name.hasPrefix(".") }
 
     public init(id: ItemID, parentID: ItemID, name: String, displayName: String? = nil,
                 isDirectory: Bool, size: Int64, modified: Date, mode: UInt32,
