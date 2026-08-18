@@ -100,6 +100,11 @@ targets:
           # which is why the sidebar read "FinderADB" instead of the device.
           # iCloud Drive disables it for the same reason.
           NSFileProviderDefaultDomainEnabled: false
+          # Both of Apple's own providers set this. Without it the domain can
+          # land in the disabled state, where browsing still works but every
+          # write is rejected with NSFileProviderErrorDomainDisabled (-2011) —
+          # a read-only mount that looks writable.
+          NSExtensionFileProviderEnabledByDefault: true
           # Show the domain's own name in the sidebar rather than prefixing it
           # with the provider's.
           NSFileProviderHideExtensionName: true

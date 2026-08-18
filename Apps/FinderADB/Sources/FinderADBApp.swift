@@ -47,6 +47,15 @@ struct MenuContent: View {
     @ObservedObject var controller: DomainController
 
     var body: some View {
+        if controller.needsUserEnable {
+            // Worth shouting about: without this the device mounts and browses
+            // normally, and every write fails.
+            Text("Turn on “Finder ADB” in System Settings")
+            Text("File writing is disabled until then.").font(.caption)
+            Button("Open Login Items & Extensions…") { controller.openExtensionSettings() }
+            Divider()
+        }
+
         if !controller.serverReachable {
             Text("adb server unreachable")
             if let error = controller.lastError {

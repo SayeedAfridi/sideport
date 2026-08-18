@@ -32,6 +32,23 @@ actor DeviceSession {
         let url = try FinderADB.storeURL(forSerial: serial)
         let opened = try MetadataStore(path: url.path, deviceRoot: root)
         store = opened
+
+        // The root row is seeded with a placeholder mode, so its write
+        // capability would otherwise be wrong: /storage/emulated/0 is drwxrws---
+        // and the seed says drwxr-xr-x.
+        if let rootEntry = try? await client.stat(root, on: selector) , rootEntry.exists {
+            try? opened.update(MetadataStore.rootID, from: rootEntry)
+        }
+
+        // Collect staging files from transfers that died mid-flight. Only ones
+        // older than an hour, so a transfer running right now is never swept
+        // out from under itself.
+        Task { [client, selector] in
+            if let swept = try? await client.sweepStagingFiles(under: root, on: selector), swept > 0 {
+                Log.write.info("swept \(swept, privacy: .public) stale staging files")
+            }
+        }
+
         Log.domain.info("store ready for \(self.serial, privacy: .public) at root \(root, privacy: .public)")
         return opened
     }
@@ -101,5 +118,80 @@ actor DeviceSession {
         let path = try store.path(of: id)
         Log.fetch.info("pulling \(path, privacy: .public)")
         try await client.pull(path, to: destination, on: selector, progress: progress)
+    }
+
+    // MARK: - Writes
+
+    /// Creates a directory and records it.
+    func createDirectory(named name: String, in parent: ItemID) async throws -> (StoredItem, ItemVersion) {
+        let store = try await preparedStore()
+        let path = try store.path(of: parent) + "/" + name
+        Log.write.info("mkdir \(path, privacy: .public)")
+        try await client.makeDirectory(path, on: selector)
+        return try await record(path: path, name: name, in: parent, store: store)
+    }
+
+    /// Uploads a new file and records it.
+    func createFile(named name: String, in parent: ItemID, from source: URL,
+                    progress: @escaping @Sendable (Int64) throws -> Void) async throws -> (StoredItem, ItemVersion) {
+        let store = try await preparedStore()
+        let path = try store.path(of: parent) + "/" + name
+        Log.write.info("create \(path, privacy: .public)")
+        try await client.pushAtomically(source, to: path, on: selector, progress: progress)
+        return try await record(path: path, name: name, in: parent, store: store)
+    }
+
+    /// Replaces an existing file's contents.
+    func replaceContents(of id: ItemID, from source: URL,
+                         progress: @escaping @Sendable (Int64) throws -> Void) async throws -> (StoredItem, ItemVersion) {
+        let store = try await preparedStore()
+        let path = try store.path(of: id)
+        Log.write.info("write \(path, privacy: .public)")
+        try await client.pushAtomically(source, to: path, on: selector, progress: progress)
+
+        let entry = try await client.stat(path, on: selector)
+        try store.update(id, from: entry)
+        return try await itemAndVersion(id)
+    }
+
+    /// Renames and/or moves, preserving the identifier so the subtree keeps its
+    /// identity in Finder.
+    func relocate(_ id: ItemID, to name: String, parent: ItemID) async throws -> (StoredItem, ItemVersion) {
+        let store = try await preparedStore()
+        let source = try store.path(of: id)
+        let destination = try store.path(of: parent) + "/" + name
+        guard source != destination else { return try await itemAndVersion(id) }
+
+        Log.write.info("mv \(source, privacy: .public) -> \(destination, privacy: .public)")
+        try await client.move(from: source, to: destination, on: selector)
+        try store.move(id, toParent: parent, name: name)
+        return try await itemAndVersion(id)
+    }
+
+    func delete(_ id: ItemID) async throws {
+        let store = try await preparedStore()
+        let path = try store.path(of: id)
+        Log.write.info("rm \(path, privacy: .public)")
+        try await client.remove(path, on: selector)
+        try store.markDeleted(id)
+    }
+
+    /// Stats what we just wrote and folds it into the store, so the row carries
+    /// the device's own size, mtime, and inode rather than our guess at them.
+    private func record(path: String, name: String, in parent: ItemID,
+                        store: MetadataStore) async throws -> (StoredItem, ItemVersion) {
+        let entry = try await client.stat(path, on: selector, followSymlinks: false)
+        guard entry.exists else { throw CoreError.itemNotFound(parent) }
+
+        let named = AdbFileEntry(name: name, mode: entry.mode, size: entry.size,
+                                 modified: entry.modified, dev: entry.dev, ino: entry.ino)
+        // A name reused after a delete must not inherit the old identity, so an
+        // existing row is refreshed rather than a duplicate inserted.
+        if let existing = try store.child(of: parent, named: name) {
+            try store.update(existing.id, from: named)
+            return try await itemAndVersion(existing.id)
+        }
+        let inserted = try store.insert(childOf: parent, entry: named)
+        return (inserted, store.version(of: inserted))
     }
 }

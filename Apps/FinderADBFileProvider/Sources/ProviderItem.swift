@@ -41,9 +41,29 @@ final class ProviderItem: NSObject, NSFileProviderItem {
         NSFileProviderItemVersion(contentVersion: version.content, metadataVersion: version.metadata)
     }
 
-    /// Read-only for M2. Advertising writes we cannot yet perform would make
-    /// Finder offer operations that fail halfway.
+    /// Derived from the device's own mode bits rather than assumed.
+    ///
+    /// `adb` runs as uid 2000 (`shell`), which reaches user storage through
+    /// supplementary groups such as `media_rw` and `ext_data_rw` — so the group
+    /// write bit is the meaningful signal, not the owner bit. Anything genuinely
+    /// unwritable still fails at the device, but advertising the truth up front
+    /// stops Finder offering operations that would die halfway.
+    private var isWritable: Bool { stored.mode & 0o220 != 0 }
+
     var capabilities: NSFileProviderItemCapabilities {
-        stored.isDirectory ? [.allowsReading, .allowsContentEnumerating] : [.allowsReading]
+        guard isWritable else {
+            return stored.isDirectory ? [.allowsReading, .allowsContentEnumerating] : [.allowsReading]
+        }
+        if stored.isDirectory {
+            var capabilities: NSFileProviderItemCapabilities =
+                [.allowsReading, .allowsContentEnumerating, .allowsAddingSubItems]
+            // The root is the volume itself: renaming or deleting it is not a
+            // thing Finder should offer.
+            if !stored.isRoot {
+                capabilities.formUnion([.allowsRenaming, .allowsDeleting, .allowsReparenting])
+            }
+            return capabilities
+        }
+        return [.allowsReading, .allowsWriting, .allowsRenaming, .allowsDeleting, .allowsReparenting]
     }
 }

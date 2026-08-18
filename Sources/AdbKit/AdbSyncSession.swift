@@ -245,10 +245,12 @@ public final class AdbSyncSession {
     // MARK: - Push
 
     /// Pushes a local file to the device, preserving its mtime.
+    /// `progress` may throw to abort the transfer, which is how a cancelled
+    /// Finder upload stops without waiting for gigabytes to finish.
     public func push(_ localURL: URL,
                      to remotePath: String,
                      mode: UInt16 = 0o644,
-                     progress: ((Int64) -> Void)? = nil) throws {
+                     progress: ((Int64) throws -> Void)? = nil) throws {
         let attributes = try FileManager.default.attributesOfItem(atPath: localURL.path)
         let modified = (attributes[.modificationDate] as? Date) ?? Date()
 
@@ -265,7 +267,7 @@ public final class AdbSyncSession {
             let chunk = try handle.read(upToCount: Self.maxChunk) ?? Data()
             if chunk.isEmpty { break }
             try send(id: "DATA", payload: [UInt8](chunk))
-            progress?(Int64(chunk.count))
+            try progress?(Int64(chunk.count))
         }
 
         let mtime = UInt32(max(0, modified.timeIntervalSince1970))

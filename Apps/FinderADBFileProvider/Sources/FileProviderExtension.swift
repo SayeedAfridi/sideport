@@ -86,11 +86,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         return progress
     }
 
-    // MARK: - Writes (M3)
-    //
-    // Item capabilities advertise read-only, so Finder should not reach these.
-    // They exist because the protocol requires them, and they fail loudly rather
-    // than silently doing nothing.
+    // MARK: - Writes
 
     func createItem(basedOn itemTemplate: NSFileProviderItem,
                     fields: NSFileProviderItemFields,
@@ -98,8 +94,49 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     options: NSFileProviderCreateItemOptions = [],
                     request: NSFileProviderRequest,
                     completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        completionHandler(nil, [], false, Self.notYetImplemented)
-        return Progress(totalUnitCount: 0)
+        let progress = Progress(totalUnitCount: 1)
+        let filename = itemTemplate.filename
+
+        // Finder writes .DS_Store into every directory it opens. Refusing here
+        // keeps the file in the Mac's local replica — Finder stays happy — while
+        // the phone never sees it.
+        guard !SyncExclusions.excludes(filename) else {
+            Log.write.debug("excluded \(filename, privacy: .public) from sync")
+            completionHandler(nil, [], false, NSFileProviderError(.excludedFromSync))
+            return progress
+        }
+
+        let isDirectory = itemTemplate.contentType == .folder
+        let expected = (itemTemplate.documentSize ?? nil)?.int64Value ?? 1
+
+        Task { [session] in
+            do {
+                guard let parent = itemTemplate.parentItemIdentifier.itemID else {
+                    throw CoreError.itemNotFound(0)
+                }
+
+                let result: (StoredItem, ItemVersion)
+                if isDirectory {
+                    result = try await session.createDirectory(named: filename, in: parent)
+                } else {
+                    guard let url else { throw CoreError.itemNotFound(parent) }
+                    progress.totalUnitCount = max(expected, 1)
+                    result = try await session.createFile(named: filename, in: parent, from: url) { sent in
+                        guard !progress.isCancelled else { throw CancellationError() }
+                        progress.completedUnitCount = min(sent, progress.totalUnitCount)
+                    }
+                }
+
+                completionHandler(ProviderItem(result.0, version: result.1,
+                                               rootFilename: session.rootFilename), [], false, nil)
+            } catch is CancellationError {
+                completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+            } catch {
+                Log.write.error("create failed: \(error.localizedDescription, privacy: .public)")
+                completionHandler(nil, [], false, ProviderError.map(error))
+            }
+        }
+        return progress
     }
 
     func modifyItem(_ item: NSFileProviderItem,
@@ -109,8 +146,48 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     options: NSFileProviderModifyItemOptions = [],
                     request: NSFileProviderRequest,
                     completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        completionHandler(nil, [], false, Self.notYetImplemented)
-        return Progress(totalUnitCount: 0)
+        let progress = Progress(totalUnitCount: 1)
+
+        guard !SyncExclusions.excludes(item.filename) else {
+            completionHandler(nil, [], false, NSFileProviderError(.excludedFromSync))
+            return progress
+        }
+
+        let filename = item.filename
+        let newParent = item.parentItemIdentifier.itemID
+        let wantsRelocate = changedFields.contains(.filename) || changedFields.contains(.parentItemIdentifier)
+        let wantsContents = changedFields.contains(.contents)
+        let expected = (item.documentSize ?? nil)?.int64Value ?? 1
+
+        Task { [session] in
+            do {
+                guard let id = item.itemIdentifier.itemID else { throw CoreError.itemNotFound(0) }
+                var current = try await session.itemAndVersion(id)
+
+                // Rename before content: doing it the other way round would
+                // upload into the old path and then move the fresh bytes.
+                if wantsRelocate, let newParent {
+                    current = try await session.relocate(id, to: filename, parent: newParent)
+                }
+
+                if wantsContents, let newContents {
+                    progress.totalUnitCount = max(expected, 1)
+                    current = try await session.replaceContents(of: id, from: newContents) { sent in
+                        guard !progress.isCancelled else { throw CancellationError() }
+                        progress.completedUnitCount = min(sent, progress.totalUnitCount)
+                    }
+                }
+
+                completionHandler(ProviderItem(current.0, version: current.1,
+                                               rootFilename: session.rootFilename), [], false, nil)
+            } catch is CancellationError {
+                completionHandler(nil, [], false, NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+            } catch {
+                Log.write.error("modify failed: \(error.localizedDescription, privacy: .public)")
+                completionHandler(nil, [], false, ProviderError.map(error))
+            }
+        }
+        return progress
     }
 
     func deleteItem(identifier: NSFileProviderItemIdentifier,
@@ -118,8 +195,19 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                     options: NSFileProviderDeleteItemOptions = [],
                     request: NSFileProviderRequest,
                     completionHandler: @escaping (Error?) -> Void) -> Progress {
-        completionHandler(Self.notYetImplemented)
-        return Progress(totalUnitCount: 0)
+        let progress = Progress(totalUnitCount: 1)
+        Task { [session] in
+            do {
+                guard let id = identifier.itemID else { throw CoreError.itemNotFound(0) }
+                try await session.delete(id)
+                completionHandler(nil)
+            } catch {
+                Log.write.error("delete failed: \(error.localizedDescription, privacy: .public)")
+                completionHandler(ProviderError.map(error))
+            }
+            progress.completedUnitCount = 1
+        }
+        return progress
     }
 
     // MARK: - Helpers

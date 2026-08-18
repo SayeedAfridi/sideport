@@ -172,14 +172,63 @@ public final class AdbClient: Sendable {
                      to remotePath: String,
                      on selector: DeviceSelector,
                      mode: UInt16 = 0o644,
-                     progress: (@Sendable (Int64) -> Void)? = nil) async throws {
+                     progress: (@Sendable (Int64) throws -> Void)? = nil) async throws {
         try await withSyncSession(selector) { session in
             var transferred: Int64 = 0
             try session.push(localURL, to: remotePath, mode: mode) { delta in
                 transferred += delta
-                progress?(transferred)
+                try progress?(transferred)
             }
         }
+    }
+
+    /// Uploads to a temporary name in the destination directory, then renames
+    /// into place.
+    ///
+    /// Two problems solved by one mechanism. An interrupted direct `SEND` would
+    /// leave the user's existing file truncated — `mv` within a directory is
+    /// atomic, so the visible file either is the old one or the complete new
+    /// one. And the sync protocol's `SEND` takes `"path,mode"`, splitting on the
+    /// last comma, so a filename containing a comma is ambiguous; the UUID
+    /// temporary name never contains one.
+    public func pushAtomically(_ localURL: URL,
+                               to remotePath: String,
+                               on selector: DeviceSelector,
+                               mode: UInt16 = 0o644,
+                               progress: (@Sendable (Int64) throws -> Void)? = nil) async throws {
+        let staging = Self.stagingPath(for: remotePath)
+        do {
+            try await push(localURL, to: staging, on: selector, mode: mode, progress: progress)
+            try await move(from: staging, to: remotePath, on: selector)
+        } catch {
+            // Best effort: if the device is gone this fails too, and the sweep
+            // on next connect will collect the leftover.
+            try? await remove(staging, on: selector, recursive: false)
+            throw error
+        }
+    }
+
+    /// Prefix for in-flight uploads. Public so the orphan sweep and the
+    /// enumerator can both recognise them.
+    public static let stagingPrefix = ".finderadb-tmp-"
+
+    static func stagingPath(for remotePath: String) -> String {
+        let directory = (remotePath as NSString).deletingLastPathComponent
+        return "\(directory)/\(stagingPrefix)\(UUID().uuidString)"
+    }
+
+    /// Removes staging files left behind by transfers that died mid-flight.
+    ///
+    /// Only files older than `olderThanMinutes` are touched, so a transfer
+    /// running right now in another process is never swept out from under it.
+    @discardableResult
+    public func sweepStagingFiles(under root: String,
+                                  on selector: DeviceSelector,
+                                  olderThanMinutes: Int = 60) async throws -> Int {
+        let command = "find \(adbShellQuote(root)) -type f -name \(adbShellQuote(Self.stagingPrefix + "*")) "
+            + "-mmin +\(olderThanMinutes) -print -delete 2>/dev/null | wc -l"
+        let result = try await shell(command, on: selector)
+        return Int(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
     // MARK: - Shell

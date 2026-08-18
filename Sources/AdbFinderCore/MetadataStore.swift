@@ -178,6 +178,36 @@ public final class MetadataStore: @unchecked Sendable {
         }
     }
 
+    /// Refreshes a row from a fresh device stat, after we changed the file
+    /// ourselves. Returns nil when nothing Finder would notice differs, so a
+    /// no-op write does not churn the change log.
+    @discardableResult
+    public func update(_ id: ItemID, from entry: AdbFileEntry) throws -> StoredItem? {
+        try lock.withLock {
+            guard let current = try database.queryOne(
+                Self.selectColumns + " WHERE id = ?1 AND deleted_at IS NULL",
+                [.integer(id)], row: Self.decode) else { throw CoreError.itemNotFound(id) }
+
+            let sameContent = current.size == entry.size
+                && Int64(current.modified.timeIntervalSince1970) == Int64(entry.modified.timeIntervalSince1970)
+            guard !(sameContent && current.mode == entry.mode) else { return nil }
+
+            try database.transaction {
+                try database.run("""
+                    UPDATE items SET size = ?2, mtime = ?3, mode = ?4, dev = ?5, ino = ?6 WHERE id = ?1
+                    """, [.integer(id), .integer(entry.size),
+                          .integer(Int64(entry.modified.timeIntervalSince1970)),
+                          .integer(Int64(entry.mode)),
+                          .optionalInteger(entry.dev), .optionalInteger(entry.ino)])
+                try appendChangeLocked(id, .modified)
+            }
+            return StoredItem(id: current.id, parentID: current.parentID, name: current.name,
+                              displayName: current.displayName, isDirectory: entry.isDirectory,
+                              size: entry.size, modified: entry.modified, mode: entry.mode,
+                              dev: entry.dev ?? current.dev, ino: entry.ino ?? current.ino)
+        }
+    }
+
     /// Tombstones rather than deleting: `enumerateChanges` must still be able to
     /// report the deletion to a client whose anchor predates it.
     public func markDeleted(_ id: ItemID) throws {

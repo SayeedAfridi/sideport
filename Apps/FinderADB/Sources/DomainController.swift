@@ -1,3 +1,4 @@
+import AppKit
 import AdbFinderCore
 import AdbKit
 import FileProvider
@@ -14,6 +15,11 @@ final class DomainController: ObservableObject {
     @Published private(set) var devices: [AdbDevice] = []
     @Published private(set) var serverReachable = false
     @Published private(set) var lastError: String?
+    /// True when macOS has the extension switched off. Browsing still works in
+    /// that state, but every write is rejected with
+    /// `NSFileProviderErrorDomainDisabled`, so a mount that looks writable
+    /// silently is not. Only the user can change this, in System Settings.
+    @Published private(set) var needsUserEnable = false
 
     private let client = AdbClient()
     private var watcher: Task<Void, Never>?
@@ -93,6 +99,36 @@ final class DomainController: ObservableObject {
         for domain in registered where !usable.contains(where: { $0.serial == domain.identifier.rawValue }) {
             try? await NSFileProviderManager.remove(domain)
             Log.domain.info("removed domain \(domain.identifier.rawValue, privacy: .public)")
+        }
+
+        await checkUserEnabled()
+    }
+
+    /// Reads back whether macOS considers our domains switched on.
+    private func checkUserEnabled() async {
+        let current = (try? await NSFileProviderManager.domains()) ?? []
+        let live = current.filter { domain in
+            devices.contains { $0.serial == domain.identifier.rawValue && $0.state.isUsable }
+        }
+        guard !live.isEmpty else {
+            needsUserEnable = false
+            return
+        }
+        for domain in live {
+            Log.domain.info("domain \(domain.identifier.rawValue, privacy: .public) userEnabled=\(domain.userEnabled, privacy: .public) disconnected=\(domain.isDisconnected, privacy: .public)")
+        }
+        needsUserEnable = live.contains { !$0.userEnabled }
+    }
+
+    /// Opens the pane holding the File Providers switch.
+    func openExtensionSettings() {
+        let candidates = [
+            "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
+            "x-apple.systempreferences:com.apple.ExtensionsPreferences",
+            "x-apple.systempreferences:com.apple.preference.general",
+        ]
+        for candidate in candidates {
+            if let url = URL(string: candidate), NSWorkspace.shared.open(url) { return }
         }
     }
 
