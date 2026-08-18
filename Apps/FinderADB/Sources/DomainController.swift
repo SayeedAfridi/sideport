@@ -28,6 +28,9 @@ struct DeviceStatus: Sendable, Equatable {
 final class DomainController: ObservableObject {
     @Published private(set) var devices: [AdbDevice] = []
     @Published private(set) var statuses: [String: DeviceStatus] = [:]
+    /// Serial → the name the device calls itself. Published so the menu can
+    /// show it next to the model number rather than instead of it.
+    @Published private(set) var resolvedNames: [String: String] = [:]
     /// Nil until we have looked; empty string never — see `AdbServerController`.
     @Published private(set) var adbBinaryPath: String?
     @Published private(set) var serverReachable = false
@@ -46,6 +49,16 @@ final class DomainController: ObservableObject {
     /// Resolved once per device: it costs a shell round trip and cannot change
     /// while the device stays plugged in.
     private var friendlyNames: [String: String] = [:]
+
+    /// The device's own name, and its model number, as separate facts. Either
+    /// may be missing, and on many phones they are the same string.
+    func labels(for device: AdbDevice) -> (name: String, model: String?) {
+        let name = resolvedNames[device.serial] ?? device.displayName
+        let model = device.model
+        // Repeating an identical value twice reads as a rendering bug.
+        guard let model, model != name else { return (name, nil) }
+        return (name, model)
+    }
 
     func start() {
         guard watcher == nil else { return }
@@ -220,12 +233,16 @@ final class DomainController: ObservableObject {
     /// What the device calls itself, falling back to the model string that
     /// `devices-l` reports — which is often a bare part number.
     private func friendlyName(for device: AdbDevice) async -> String {
-        if preferences.sidebarNaming == .model { return device.displayName }
-        if let cached = friendlyNames[device.serial] { return cached }
+        if let cached = friendlyNames[device.serial] {
+            return preferences.sidebarNaming == .model ? device.displayName : cached
+        }
         let resolved = (try? await client.deviceName(for: .serial(device.serial))) ?? nil
         let name = resolved ?? device.displayName
         friendlyNames[device.serial] = name
-        return name
+        resolvedNames[device.serial] = name
+        // The preference governs the Finder sidebar only; the menu always shows
+        // both facts, so the name is resolved either way.
+        return preferences.sidebarNaming == .model ? device.displayName : name
     }
 
     /// Used on quit so a stale domain does not linger after the app is gone.

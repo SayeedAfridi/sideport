@@ -111,18 +111,21 @@ struct MenuContent: View {
         switch device.state {
         case .device:
             let status = controller.statuses[device.serial]
-            Button(device.displayName) { controller.revealInFinder(device) }
-            if let capacity = status?.capacityDescription {
-                Text(capacity)
-            }
+            let labels = controller.labels(for: device)
+            Button(labels.name) { controller.revealInFinder(device) }
+            // Model and capacity share a line: three rows per device turns a
+            // menu into a table.
+            Text([labels.model, status?.capacityDescription]
+                .compactMap { $0 }
+                .joined(separator: " · "))
             if status?.activity.isBusy == true {
                 Text("Transferring…")
             }
         case .unauthorized:
-            Text("\(device.displayName) — unauthorized")
+            Text("\(controller.labels(for: device).name) — unauthorized")
             Text("Accept the USB debugging prompt on the device.")
         case .offline:
-            Text("\(device.displayName) — offline")
+            Text("\(controller.labels(for: device).name) — offline")
             Text("Reconnect the cable, or unlock the device.")
         default:
             Text("\(device.displayName) — \(device.state.rawValue)")
@@ -165,6 +168,7 @@ struct MenuContent: View {
                 }
             }))
 
+        // Governs the Finder sidebar only; the menu above always shows both.
         Menu("Sidebar Name") {
             ForEach(Preferences.SidebarNaming.allCases, id: \.self) { option in
                 Button {
