@@ -218,9 +218,11 @@ public final class AdbSyncSession {
 
     /// Pulls a device file to a local URL, replacing anything already there.
     @discardableResult
+    /// `progress` may throw to abort the transfer — that is how a cancelled
+    /// Finder fetch stops a multi-gigabyte pull without waiting for it.
     public func pull(_ remotePath: String,
                      to localURL: URL,
-                     progress: ((Int64) -> Void)? = nil) throws -> Int64 {
+                     progress: ((Int64) throws -> Void)? = nil) throws -> Int64 {
         let manager = FileManager.default
         try? manager.removeItem(at: localURL)
         guard manager.createFile(atPath: localURL.path, contents: nil) else {
@@ -232,7 +234,7 @@ public final class AdbSyncSession {
         do {
             return try receive(remotePath) { chunk in
                 try handle.write(contentsOf: chunk)
-                progress?(Int64(chunk.count))
+                try progress?(Int64(chunk.count))
             }
         } catch {
             try? manager.removeItem(at: localURL)

@@ -82,7 +82,8 @@ public final class AdbClient: Sendable {
                     defer { connection.close() }
                     // Cancelling only shuts the socket down; the read below
                     // then returns EOF and this thread performs the close.
-                    continuation.onTermination = { _ in connection.canceller() }
+                    let cancel = connection.canceller
+                    continuation.onTermination = { _ in cancel() }
 
                     do {
                         try connection.send("host:track-devices-l")
@@ -157,12 +158,12 @@ public final class AdbClient: Sendable {
     public func pull(_ remotePath: String,
                      to localURL: URL,
                      on selector: DeviceSelector,
-                     progress: (@Sendable (Int64) -> Void)? = nil) async throws -> Int64 {
+                     progress: (@Sendable (Int64) throws -> Void)? = nil) async throws -> Int64 {
         try await withSyncSession(selector) { session in
             var transferred: Int64 = 0
             return try session.pull(remotePath, to: localURL) { delta in
                 transferred += delta
-                progress?(transferred)
+                try progress?(transferred)
             }
         }
     }
