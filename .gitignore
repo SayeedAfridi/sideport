@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdatad
+xcuserdata/
+.DS_Store
+
+# Planning docs — local working notes, not part of the shipped repo
+plans/
