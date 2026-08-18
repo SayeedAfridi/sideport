@@ -25,6 +25,7 @@ Commands:
   watch                         Stream device hot-plug events
   watchfs <remote-dir>...       Stream filesystem events via inotifyd
   selftest <remote-dir>         Round-trip every operation in a scratch dir
+  resilience <remote-dir>       Kill the server underneath live transfers
   bench [MB] [remote-dir]       Measure throughput and peak memory (default 256 MB)
 """
 
@@ -179,6 +180,11 @@ do {
                 print("\(Date().formatted(date: .omitted, time: .standard))  \(line)")
             }
         }
+
+    case "resilience":
+        let args = require(1, "resilience <remote-dir>")
+        var harness = try Resilience(client: client, selector: try await resolveSelector())
+        try await harness.run(in: args[0])
 
     case "selftest":
         let args = require(1, "selftest <remote-dir>")
