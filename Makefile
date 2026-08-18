@@ -1,4 +1,4 @@
-.PHONY: project build test app icon clean reset-domains
+.PHONY: project build test app icon clean reset-domains preflight release
 
 project:            ## Regenerate FinderADB.xcodeproj from project.yml
 	xcodegen generate
@@ -18,6 +18,12 @@ icon:               ## Regenerate the app icon set from the SF Symbol source
 
 reset-domains:      ## Tear down every registered File Provider domain
 	./scripts/reset-domain.sh
+
+preflight:          ## Report what is still missing before a signed release
+	./scripts/preflight-release.sh
+
+release:            ## Build, sign, notarize and staple FinderADB.dmg
+	./scripts/release.sh
 
 clean:
 	rm -rf .build FinderADB.xcodeproj

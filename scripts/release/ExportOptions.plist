@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>developer-id</string>
+    <key>teamID</key>
+    <string>NU2JM39S5P</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <!-- Notarization is driven explicitly by release.sh so its output can be
+         inspected; letting xcodebuild do it hides the log on failure. -->
+    <key>destination</key>
+    <string>export</string>
+</dict>
+</plist>
