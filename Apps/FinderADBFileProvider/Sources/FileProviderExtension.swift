@@ -227,15 +227,30 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     // MARK: - Helpers
 
-    private static var notYetImplemented: Error {
-        NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError, userInfo: [
-            NSLocalizedDescriptionKey: "Writing to the device is not supported yet."
-        ])
-    }
-
+    /// Where a materialised file is written before the system takes it.
+    ///
+    /// The manager's own temporary directory is guaranteed to be on the same
+    /// volume as the replica, which lets the system claim the file by renaming
+    /// it. The container's `tmp` is only *probably* on that volume, and if it
+    /// ever is not, every materialisation silently pays a second full copy —
+    /// on a 7 GB download that is 7 GB of avoidable I/O and transient disk.
+    ///
+    /// So the fallback is kept, because failing a download over a temporary
+    /// directory would be worse, but it is no longer silent.
     private static func temporaryURL(for domain: NSFileProviderDomain, name: String) -> URL {
-        let directory = (try? NSFileProviderManager(for: domain)?.temporaryDirectoryURL())
-            .flatMap { $0 } ?? FileManager.default.temporaryDirectory
+        let directory: URL
+        do {
+            guard let manager = NSFileProviderManager(for: domain) else {
+                throw CoreError.itemNotFound(0)
+            }
+            directory = try manager.temporaryDirectoryURL()
+        } catch {
+            Log.fetch.error("""
+                falling back to the container tmp: \(error.localizedDescription, privacy: .public)
+                """)
+            return FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(UUID().uuidString)-\(name)")
+        }
         return directory.appendingPathComponent("\(UUID().uuidString)-\(name)")
     }
 }
