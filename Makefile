@@ -1,4 +1,4 @@
-.PHONY: project build test app clean reset-domains
+.PHONY: project build test app icon clean reset-domains
 
 project:            ## Regenerate FinderADB.xcodeproj from project.yml
 	xcodegen generate
@@ -12,6 +12,9 @@ test:               ## Run the package test suites
 app: project        ## Build the container app and its extension
 	xcodebuild -project FinderADB.xcodeproj -scheme FinderADB \
 		-configuration Debug -destination 'platform=macOS' build
+
+icon:               ## Regenerate the app icon set from the SF Symbol source
+	swift scripts/make-icon.swift Apps/FinderADB/Assets.xcassets/AppIcon.appiconset
 
 reset-domains:      ## Tear down every registered File Provider domain
 	./scripts/reset-domain.sh
