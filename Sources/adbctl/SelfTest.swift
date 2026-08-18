@@ -102,6 +102,25 @@ struct SelfTest {
         check("move handles quotes and unicode", try await client.stat(moved, on: selector).exists)
         check("source is gone after move", try await !client.stat(tricky, on: selector).exists)
 
+        // Move detection in AdbFinderCore keys off (dev, ino) staying constant
+        // across a rename. If that were false the reconciler would report a
+        // delete plus a create and Finder would lose the item's identity.
+        print("\ninode stability")
+        let beforeMove = try await client.stat(moved, on: selector, followSymlinks: false)
+        check("device reports an inode", beforeMove.ino != nil && beforeMove.ino != 0,
+              "ino=\(beforeMove.ino.map(String.init) ?? "nil")")
+        let renamed = "\(root)/renamed-again.txt"
+        try await client.move(from: moved, to: renamed, on: selector)
+        let afterMove = try await client.stat(renamed, on: selector, followSymlinks: false)
+        check("inode survives a rename",
+              beforeMove.ino == afterMove.ino && beforeMove.dev == afterMove.dev,
+              "\(beforeMove.dev.map(String.init) ?? "nil"):\(beforeMove.ino.map(String.init) ?? "nil") -> \(afterMove.dev.map(String.init) ?? "nil"):\(afterMove.ino.map(String.init) ?? "nil")")
+
+        let intoSubdir = "\(root)/nested/moved-across.txt"
+        try await client.move(from: renamed, to: intoSubdir, on: selector)
+        let afterCross = try await client.stat(intoSubdir, on: selector, followSymlinks: false)
+        check("inode survives a move between directories", beforeMove.ino == afterCross.ino)
+
         print("\nmissing paths")
         let ghost = try await client.stat("\(root)/does-not-exist", on: selector)
         check("stat of a missing path reports absence instead of throwing", !ghost.exists)
