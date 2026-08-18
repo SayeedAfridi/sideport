@@ -7,7 +7,8 @@ import Foundation
 /// usable devices.
 ///
 /// The domain identifier is the device serial, so a phone that is unplugged and
-/// replugged reuses its metadata store instead of renumbering every file.
+/// replugged reuses its metadata store instead of renumbering every file. The
+/// *display name* is separate and is what Finder shows in the sidebar.
 @MainActor
 final class DomainController: ObservableObject {
     @Published private(set) var devices: [AdbDevice] = []
@@ -16,6 +17,9 @@ final class DomainController: ObservableObject {
 
     private let client = AdbClient()
     private var watcher: Task<Void, Never>?
+    /// Resolved once per device: it costs a shell round trip and cannot change
+    /// while the device stays plugged in.
+    private var friendlyNames: [String: String] = [:]
 
     func start() {
         guard watcher == nil else { return }
@@ -38,7 +42,6 @@ final class DomainController: ObservableObject {
                     lastError = nil
                     await apply(snapshot)
                 }
-                // A clean end of stream still means the server went away.
                 serverReachable = false
             } catch {
                 serverReachable = false
@@ -53,14 +56,34 @@ final class DomainController: ObservableObject {
     private func apply(_ snapshot: [AdbDevice]) async {
         devices = snapshot
         let usable = snapshot.filter { $0.state.isUsable }
+
+        // Resolve every name first so collisions can be judged against the
+        // complete picture rather than whichever device was seen first.
+        var resolved: [String: String] = [:]
+        for device in usable {
+            resolved[device.serial] = await friendlyName(for: device)
+        }
+        let occurrences = Dictionary(grouping: resolved.values, by: { $0 }).mapValues(\.count)
+
         let registered = (try? await NSFileProviderManager.domains()) ?? []
 
-        for device in usable where !registered.contains(where: { $0.identifier.rawValue == device.serial }) {
+        for device in usable {
+            let base = resolved[device.serial] ?? device.displayName
+            // Only when two devices would be indistinguishable is the serial
+            // appended — "POCO F7" beats "POCO F7 (d13ee35)" when it is unique.
+            let label = (occurrences[base] ?? 0) > 1 ? "\(base) (\(device.serial))" : base
+
+            let existing = registered.first { $0.identifier.rawValue == device.serial }
+            // Adding again under the same identifier updates the domain in
+            // place, which is how a corrected name reaches the sidebar without
+            // tearing down the store.
+            guard existing?.displayName != label else { continue }
+
             let domain = NSFileProviderDomain(identifier: .init(rawValue: device.serial),
-                                              displayName: Self.displayName(for: device, among: usable))
+                                              displayName: label)
             do {
                 try await NSFileProviderManager.add(domain)
-                Log.domain.info("added domain \(device.serial, privacy: .public)")
+                Log.domain.info("registered \(device.serial, privacy: .public) as \(label, privacy: .public)")
             } catch {
                 Log.domain.error("could not add domain: \(error.localizedDescription, privacy: .public)")
                 lastError = error.localizedDescription
@@ -73,13 +96,14 @@ final class DomainController: ObservableObject {
         }
     }
 
-    /// Two phones of the same model would otherwise be indistinguishable in the
-    /// sidebar, so only then is the serial appended.
-    static func displayName(for device: AdbDevice, among all: [AdbDevice]) -> String {
-        let base = device.displayName
-        let duplicates = all.filter { $0.displayName == base }
-        guard duplicates.count > 1 else { return base }
-        return "\(base) (\(device.serial))"
+    /// What the device calls itself, falling back to the model string that
+    /// `devices-l` reports — which is often a bare part number.
+    private func friendlyName(for device: AdbDevice) async -> String {
+        if let cached = friendlyNames[device.serial] { return cached }
+        let resolved = (try? await client.deviceName(for: .serial(device.serial))) ?? nil
+        let name = resolved ?? device.displayName
+        friendlyNames[device.serial] = name
+        return name
     }
 
     /// Used on quit so a stale domain does not linger after the app is gone.

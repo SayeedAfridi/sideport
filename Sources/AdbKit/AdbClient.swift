@@ -196,6 +196,34 @@ public final class AdbClient: Sendable {
         }
     }
 
+    /// A name a person would actually recognise.
+    ///
+    /// `host:devices-l` only reports `ro.product.model`, which on many phones is
+    /// a bare part number — this device calls itself `25053PC47I` there, while
+    /// its owner and its Bluetooth name both say "POCO F7". Preference order is
+    /// the name the owner chose, then the marketing name, then the model.
+    ///
+    /// One shell round trip, not five: the candidates run in sequence and the
+    /// first usable line wins.
+    public func deviceName(for selector: DeviceSelector) async throws -> String? {
+        let probe = [
+            "settings get global device_name 2>/dev/null",
+            "getprop ro.product.marketname",
+            "getprop ro.product.vendor.marketname",
+            "getprop ro.product.odm.marketname",
+            "getprop ro.product.model",
+        ].joined(separator: "; ")
+
+        let result = try await shell(probe, on: selector)
+        for line in result.stdout.split(separator: "\n") {
+            let candidate = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            // `settings get` prints the literal string "null" when unset.
+            guard !candidate.isEmpty, candidate != "null" else { continue }
+            return candidate
+        }
+        return nil
+    }
+
     // MARK: - Namespace mutation
     //
     // The sync protocol can create and overwrite files but cannot make
