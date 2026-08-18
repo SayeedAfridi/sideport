@@ -91,48 +91,63 @@ final class AdbSocket: @unchecked Sendable {
 
     // MARK: - I/O
 
-    func write(_ bytes: [UInt8]) throws {
-        guard !bytes.isEmpty else { return }
+    /// Writes a raw buffer. The primitive every other write funnels through, so
+    /// callers holding a reusable buffer never have to copy into an array first.
+    func write(_ buffer: UnsafeRawBufferPointer) throws {
+        guard let base = buffer.baseAddress, !buffer.isEmpty else { return }
         var offset = 0
-        try bytes.withUnsafeBytes { buffer in
-            let base = buffer.baseAddress!
-            while offset < bytes.count {
-                let n = send(fd, base.advanced(by: offset), bytes.count - offset, 0)
-                if n > 0 {
-                    offset += n
-                } else if n < 0 && errno == EINTR {
-                    continue
-                } else if n < 0 {
-                    throw AdbError.socket("send: \(String(cString: strerror(errno)))")
-                } else {
-                    throw AdbError.unexpectedEOF
-                }
+        while offset < buffer.count {
+            let n = send(fd, base.advanced(by: offset), buffer.count - offset, 0)
+            if n > 0 {
+                offset += n
+            } else if n < 0 && errno == EINTR {
+                continue
+            } else if n < 0 {
+                throw AdbError.socket("send: \(String(cString: strerror(errno)))")
+            } else {
+                throw AdbError.unexpectedEOF
             }
         }
     }
 
-    func write(_ data: Data) throws { try write([UInt8](data)) }
+    func write(_ bytes: [UInt8]) throws {
+        guard !bytes.isEmpty else { return }
+        try bytes.withUnsafeBytes { try write($0) }
+    }
 
-    /// Reads exactly `count` bytes or throws.
+    func write(_ data: Data) throws {
+        guard !data.isEmpty else { return }
+        try data.withUnsafeBytes { try write($0) }
+    }
+
+    /// Reads exactly `count` bytes into a caller-owned buffer.
+    ///
+    /// The allocation-free path: transfer loops reuse one buffer for the whole
+    /// file rather than allocating per 64 KiB chunk.
+    func readFully(into buffer: UnsafeMutableRawBufferPointer, count: Int) throws {
+        guard count > 0, let base = buffer.baseAddress else { return }
+        precondition(count <= buffer.count, "readFully would overrun the buffer")
+        var offset = 0
+        while offset < count {
+            let n = recv(fd, base.advanced(by: offset), count - offset, 0)
+            if n > 0 {
+                offset += n
+            } else if n < 0 && errno == EINTR {
+                continue
+            } else if n < 0 {
+                throw AdbError.socket("recv: \(String(cString: strerror(errno)))")
+            } else {
+                throw AdbError.unexpectedEOF
+            }
+        }
+    }
+
+    /// Reads exactly `count` bytes or throws. Convenience for small,
+    /// non-hot-path reads such as protocol headers.
     func readFully(_ count: Int) throws -> [UInt8] {
         guard count > 0 else { return [] }
         var buffer = [UInt8](repeating: 0, count: count)
-        var offset = 0
-        try buffer.withUnsafeMutableBytes { raw in
-            let base = raw.baseAddress!
-            while offset < count {
-                let n = recv(fd, base.advanced(by: offset), count - offset, 0)
-                if n > 0 {
-                    offset += n
-                } else if n < 0 && errno == EINTR {
-                    continue
-                } else if n < 0 {
-                    throw AdbError.socket("recv: \(String(cString: strerror(errno)))")
-                } else {
-                    throw AdbError.unexpectedEOF
-                }
-            }
-        }
+        try buffer.withUnsafeMutableBytes { try readFully(into: $0, count: count) }
         return buffer
     }
 

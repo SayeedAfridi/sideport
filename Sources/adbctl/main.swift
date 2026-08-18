@@ -24,6 +24,7 @@ Commands:
   shell <command...>            Run a shell command
   watch                         Stream device hot-plug events
   selftest <remote-dir>         Round-trip every operation in a scratch dir
+  bench [MB] [remote-dir]       Measure throughput and peak memory (default 256 MB)
 """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -153,6 +154,12 @@ do {
                 : devices.map { "\($0.displayName) [\($0.state.rawValue)]" }.joined(separator: ", ")
             print("\(Date().formatted(date: .omitted, time: .standard))  \(summary)")
         }
+
+    case "bench":
+        let megabytes = operands.first.flatMap(Int.init) ?? 256
+        let directory = operands.count > 1 ? operands[1] : "/sdcard"
+        try await Benchmark(client: client, selector: try await resolveSelector())
+            .run(megabytes: megabytes, remoteDirectory: directory)
 
     case "selftest":
         let args = require(1, "selftest <remote-dir>")

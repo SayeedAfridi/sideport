@@ -26,7 +26,14 @@ public final class MetadataStore: @unchecked Sendable {
 
     private let database: SQLiteDatabase
     private let lock = NSRecursiveLock()
+    /// Resolved device paths, keyed by identifier.
+    ///
+    /// Bounded because the extension is long-lived and a device with a deep
+    /// tree would otherwise grow this without limit. Eviction is wholesale
+    /// rather than LRU: entries are cheap to rebuild (one indexed query) and a
+    /// recency list would cost more to maintain than it saves.
     private var pathCache: [ItemID: String] = [:]
+    private static let pathCacheLimit = 4096
 
     public init(path: String, deviceRoot: String) throws {
         self.deviceRoot = deviceRoot.hasSuffix("/") ? String(deviceRoot.dropLast()) : deviceRoot
@@ -135,6 +142,7 @@ public final class MetadataStore: @unchecked Sendable {
 
             guard !components.isEmpty else { throw CoreError.itemNotFound(id) }
             let resolved = deviceRoot + "/" + components.joined(separator: "/")
+            if pathCache.count >= Self.pathCacheLimit { pathCache.removeAll(keepingCapacity: true) }
             pathCache[id] = resolved
             return resolved
         }

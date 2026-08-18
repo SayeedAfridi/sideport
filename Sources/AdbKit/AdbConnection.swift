@@ -69,7 +69,11 @@ final class AdbConnection {
     // MARK: - Raw stream access (post-transport)
 
     func writeRaw(_ bytes: [UInt8]) throws { try socket.write(bytes) }
+    func writeRaw(_ buffer: UnsafeRawBufferPointer) throws { try socket.write(buffer) }
     func readRaw(_ count: Int) throws -> [UInt8] { try socket.readFully(count) }
+    func readRaw(into buffer: UnsafeMutableRawBufferPointer, count: Int) throws {
+        try socket.readFully(into: buffer, count: count)
+    }
     func readRawSome(max: Int = 64 * 1024) throws -> [UInt8] { try socket.readSome(max: max) }
     func readRawToEnd() throws -> [UInt8] { try socket.readToEnd() }
 

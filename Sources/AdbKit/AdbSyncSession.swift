@@ -217,28 +217,80 @@ public final class AdbSyncSession {
     }
 
     /// Pulls a device file to a local URL, replacing anything already there.
+    ///
+    /// Socket to file descriptor through a single reusable buffer: no `Data` is
+    /// allocated per chunk, so a multi-gigabyte pull costs the same memory as a
+    /// small one.
     @discardableResult
-    /// `progress` may throw to abort the transfer — that is how a cancelled
-    /// Finder fetch stops a multi-gigabyte pull without waiting for it.
     public func pull(_ remotePath: String,
                      to localURL: URL,
                      progress: ((Int64) throws -> Void)? = nil) throws -> Int64 {
         let manager = FileManager.default
         try? manager.removeItem(at: localURL)
-        guard manager.createFile(atPath: localURL.path, contents: nil) else {
-            throw AdbError.localIO("cannot create \(localURL.path)")
+
+        let descriptor = open(localURL.path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        guard descriptor >= 0 else {
+            throw AdbError.localIO("cannot create \(localURL.path): \(String(cString: strerror(errno)))")
         }
-        let handle = try FileHandle(forWritingTo: localURL)
-        defer { try? handle.close() }
+        var closed = false
+        defer { if !closed { close(descriptor) } }
 
         do {
-            return try receive(remotePath) { chunk in
-                try handle.write(contentsOf: chunk)
-                try progress?(Int64(chunk.count))
+            try send(id: "RECV", path: remotePath)
+            var buffer = [UInt8](repeating: 0, count: Self.maxChunk)
+            var total: Int64 = 0
+
+            try buffer.withUnsafeMutableBytes { raw in
+                while true {
+                    switch try readPacketID() {
+                    case "DATA":
+                        let length = Int(try readU32())
+                        guard length <= Self.maxChunk else {
+                            isValid = false
+                            throw AdbError.protocolViolation(
+                                "DATA chunk of \(length) bytes exceeds protocol maximum")
+                        }
+                        try connection.readRaw(into: raw, count: length)
+                        try Self.writeFully(descriptor, raw.baseAddress!, length)
+                        total += Int64(length)
+                        try progress?(Int64(length))
+                    case "DONE":
+                        _ = try connection.readRaw(4)
+                        return
+                    case "FAIL":
+                        try failure()
+                    case let other:
+                        isValid = false
+                        throw AdbError.protocolViolation(
+                            "unexpected packet \(other.debugDescription) during RECV")
+                    }
+                }
             }
+
+            close(descriptor)
+            closed = true
+            return total
         } catch {
+            close(descriptor)
+            closed = true
             try? manager.removeItem(at: localURL)
             throw error
+        }
+    }
+
+    private static func writeFully(_ descriptor: Int32,
+                                   _ base: UnsafeRawPointer,
+                                   _ count: Int) throws {
+        var offset = 0
+        while offset < count {
+            let written = write(descriptor, base.advanced(by: offset), count - offset)
+            if written > 0 {
+                offset += written
+            } else if written < 0 && errno == EINTR {
+                continue
+            } else {
+                throw AdbError.localIO("write: \(String(cString: strerror(errno)))")
+            }
         }
     }
 
@@ -247,6 +299,11 @@ public final class AdbSyncSession {
     /// Pushes a local file to the device, preserving its mtime.
     /// `progress` may throw to abort the transfer, which is how a cancelled
     /// Finder upload stops without waiting for gigabytes to finish.
+    ///
+    /// Streams through one reusable frame buffer — an 8-byte `DATA` header
+    /// followed by the payload, filled in place by `read(2)` and written with a
+    /// single `send`. The obvious `FileHandle.read(upToCount:)` loop instead
+    /// held the whole file resident: 256 MB pushed peaked at 269 MB RSS.
     public func push(_ localURL: URL,
                      to remotePath: String,
                      mode: UInt16 = 0o644,
@@ -254,25 +311,60 @@ public final class AdbSyncSession {
         let attributes = try FileManager.default.attributesOfItem(atPath: localURL.path)
         let modified = (attributes[.modificationDate] as? Date) ?? Date()
 
-        guard let handle = FileHandle(forReadingAtPath: localURL.path) else {
-            throw AdbError.localIO("cannot read \(localURL.path)")
+        let descriptor = open(localURL.path, O_RDONLY)
+        guard descriptor >= 0 else {
+            throw AdbError.localIO("cannot read \(localURL.path): \(String(cString: strerror(errno)))")
         }
-        defer { try? handle.close() }
+        defer { close(descriptor) }
+        // Read once, sequentially, and do not pollute the page cache with a file
+        // we will never look at again.
+        _ = fcntl(descriptor, F_RDAHEAD, 1)
+        _ = fcntl(descriptor, F_NOCACHE, 1)
 
         // The device parses "path,mode" — the comma is the separator, so a
-        // literal comma in the filename would be misread by the device.
+        // literal comma in the filename would be misread. `pushAtomically`
+        // stages through a UUID name, which never contains one.
         try send(id: "SEND", path: "\(remotePath),\(mode)")
 
-        while true {
-            let chunk = try handle.read(upToCount: Self.maxChunk) ?? Data()
-            if chunk.isEmpty { break }
-            try send(id: "DATA", payload: [UInt8](chunk))
-            try progress?(Int64(chunk.count))
+        var frame = [UInt8](repeating: 0, count: 8 + Self.maxChunk)
+        try frame.withUnsafeMutableBytes { raw in
+            // The packet id never changes; write it once.
+            raw[0] = UInt8(ascii: "D")
+            raw[1] = UInt8(ascii: "A")
+            raw[2] = UInt8(ascii: "T")
+            raw[3] = UInt8(ascii: "A")
+            let payload = raw.baseAddress!.advanced(by: 8)
+
+            while true {
+                var count = 0
+                while true {
+                    count = read(descriptor, payload, Self.maxChunk)
+                    if count >= 0 || errno != EINTR { break }
+                }
+                guard count >= 0 else {
+                    throw AdbError.localIO("read: \(String(cString: strerror(errno)))")
+                }
+                if count == 0 { break }
+
+                let length = UInt32(count)
+                raw[4] = UInt8(length & 0xFF)
+                raw[5] = UInt8((length >> 8) & 0xFF)
+                raw[6] = UInt8((length >> 16) & 0xFF)
+                raw[7] = UInt8((length >> 24) & 0xFF)
+
+                try connection.writeRaw(UnsafeRawBufferPointer(
+                    UnsafeMutableRawBufferPointer(rebasing: raw[0..<(8 + count)])))
+                try progress?(Int64(count))
+            }
         }
 
-        let mtime = UInt32(max(0, modified.timeIntervalSince1970))
-        try connection.writeRaw(ByteCodec.id("DONE") + ByteCodec.u32(mtime))
+        try connection.writeRaw(ByteCodec.id("DONE")
+                                + ByteCodec.u32(UInt32(max(0, modified.timeIntervalSince1970))))
+        try finishSend()
+    }
 
+    /// Consumes the `OKAY`/`FAIL` that closes a `SEND`.
+    private func finishSend() throws {
         switch try readPacketID() {
         case "OKAY":
             _ = try connection.readRaw(4)
@@ -297,15 +389,6 @@ public final class AdbSyncSession {
             offset = end
         }
         try connection.writeRaw(ByteCodec.id("DONE") + ByteCodec.u32(UInt32(max(0, modified.timeIntervalSince1970))))
-
-        switch try readPacketID() {
-        case "OKAY":
-            _ = try connection.readRaw(4)
-        case "FAIL":
-            try failure()
-        case let other:
-            isValid = false
-            throw AdbError.protocolViolation("unexpected packet \(other.debugDescription) after SEND")
-        }
+        try finishSend()
     }
 }

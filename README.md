@@ -76,6 +76,35 @@ swift test                          # pure-logic tests, no device needed
 
 `-s SERIAL` selects a device when more than one is attached.
 
+## Performance
+
+Transfer speed is pinned by the USB link, so the number worth watching is
+memory. `adbctl bench` measures both and flags buffering:
+
+```sh
+.build/release/adbctl bench 256 /sdcard
+```
+
+Both directions stream through a single reusable frame buffer — an 8-byte
+header plus payload, filled in place by `read(2)` and written with one `send` —
+so peak RSS is independent of file size.
+
+| | before | after |
+|---|---|---|
+| push 256 MB, peak RSS | 269 MB | **10.5 MB** |
+| push 1 GB, peak RSS | — | **11.1 MB** |
+| push 256 MB, CPU time | 0.09 s | **0.02 s** |
+| throughput | 40 MB/s | 40 MB/s (USB limit) |
+
+The original loop used `FileHandle.read(upToCount:)`, which held the whole file
+resident. Throughput never revealed it, because the link was the bottleneck
+either way.
+
+Other bounds worth knowing: concurrent adb operations are capped at 6, since
+each occupies a thread for the length of its socket I/O and a single USB
+transport serialises underneath anyway; and the metadata store's path cache is
+capped at 4096 entries because the extension is long-lived.
+
 ## Measured on hardware
 
 Xiaomi 25053PC47I (`onyx`), USB, platform-tools 37.0.0:

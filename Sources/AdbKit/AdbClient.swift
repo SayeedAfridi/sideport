@@ -10,6 +10,14 @@ public final class AdbClient: Sendable {
     public let endpoint: AdbEndpoint
 
     private let queue: DispatchQueue
+    /// Caps how many blocking operations run at once.
+    ///
+    /// Every operation occupies a thread for the length of its socket I/O, so an
+    /// unbounded concurrent queue lets GCD spawn one thread per in-flight
+    /// request — and Finder will happily ask for a dozen directories at once.
+    /// The adb server gains nothing from more parallelism than this anyway,
+    /// since a single USB transport serialises underneath.
+    private let gate: OperationQueue
     private let featureCache = FeatureCache()
 
     public init(endpoint: AdbEndpoint = .default) {
@@ -17,6 +25,10 @@ public final class AdbClient: Sendable {
         self.queue = DispatchQueue(label: "dev.finderadb.adbkit.io",
                                    qos: .userInitiated,
                                    attributes: .concurrent)
+        self.gate = OperationQueue()
+        self.gate.underlyingQueue = queue
+        self.gate.maxConcurrentOperationCount = 6
+        self.gate.name = "dev.finderadb.adbkit.io.gate"
     }
 
     // MARK: - Server
@@ -316,7 +328,7 @@ public final class AdbClient: Sendable {
     /// never be blocked or the whole concurrency runtime can stall.
     private func run<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
-            queue.async {
+            gate.addOperation {
                 continuation.resume(with: Result { try body() })
             }
         }
