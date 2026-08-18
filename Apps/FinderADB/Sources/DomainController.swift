@@ -91,7 +91,8 @@ final class DomainController: ObservableObject {
                 try await NSFileProviderManager.add(domain)
                 Log.domain.info("registered \(device.serial, privacy: .public) as \(label, privacy: .public)")
             } catch {
-                Log.domain.error("could not add domain: \(error.localizedDescription, privacy: .public)")
+                let ns = error as NSError
+                Log.domain.error("could not add domain: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) — \(ns.localizedDescription, privacy: .public) | \(ns.userInfo.description, privacy: .public)")
                 lastError = error.localizedDescription
             }
         }
@@ -143,8 +144,20 @@ final class DomainController: ObservableObject {
     }
 
     /// Used on quit so a stale domain does not linger after the app is gone.
-    static func removeAllDomains() async {
+    ///
+    /// `.removeAll` matters: the plain removal preserves the user data, which
+    /// means the system keeps its replica — and with it every cached item
+    /// capability. A folder that has since become writable would still read as
+    /// read-only, because Finder never asks us again.
+    static func removeAllDomains(discardingReplica: Bool = true) async {
         let registered = (try? await NSFileProviderManager.domains()) ?? []
-        for domain in registered { try? await NSFileProviderManager.remove(domain) }
+        for domain in registered {
+            if discardingReplica {
+                _ = try? await NSFileProviderManager.remove(domain, mode: .removeAll)
+            } else {
+                try? await NSFileProviderManager.remove(domain)
+            }
+            Log.domain.info("removed domain \(domain.identifier.rawValue, privacy: .public)")
+        }
     }
 }

@@ -80,8 +80,12 @@ public final class MetadataStore: @unchecked Sendable {
             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
             -- The root is its own parent, which terminates path resolution.
+            -- Mode 0o40770 (drwxrwx---), not 0o40755: capabilities are derived
+            -- from the group-write bit, so a seed without it makes the root
+            -- advertise as read-only and Finder hides "New Folder" until the
+            -- real device mode arrives. Emulated storage is drwxrws--- anyway.
             INSERT INTO items (id, parent_id, name, display_name, is_dir, size, mtime, mode)
-            VALUES (1, 1, '', '', 1, 0, 0, 16877);
+            VALUES (1, 1, '', '', 1, 0, 0, 16888);
 
             PRAGMA user_version = 1;
             """)

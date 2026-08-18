@@ -26,6 +26,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let controller = DomainController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Removing a domain through the API is the only way to make the system
+        // discard its replica. Deleting cached state on disk leaves the replica
+        // intact, so stale item capabilities survive and Finder keeps believing
+        // a writable folder is read-only.
+        Log.domain.info("launched with args: \(CommandLine.arguments.joined(separator: " "), privacy: .public)")
+        if CommandLine.arguments.contains("--purge-domains") {
+            Task {
+                await DomainController.removeAllDomains()
+                Log.domain.info("purged all domains")
+                NSApplication.shared.terminate(nil)
+            }
+            return
+        }
+
         Log.domain.info("FinderADB launched")
         controller.start()
     }
@@ -36,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         controller.stop()
         let semaphore = DispatchSemaphore(value: 0)
         Task {
-            await DomainController.removeAllDomains()
+            await DomainController.removeAllDomains(discardingReplica: false)
             semaphore.signal()
         }
         _ = semaphore.wait(timeout: .now() + 3)

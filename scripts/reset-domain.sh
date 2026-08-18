@@ -14,9 +14,42 @@ set -euo pipefail
 PROVIDER="dev.afridi.finderadb.FileProvider"
 STATE="$HOME/Library/Application Support/FileProvider/$PROVIDER"
 
-echo "==> stopping the app (it removes its domains on quit)"
+# Ask xcodebuild where the product actually is. Searching DerivedData by hand
+# is a trap: regenerating the project creates a second derived-data directory,
+# and picking the wrong one silently launches a stale build — every subsequent
+# symptom then looks like a code bug in the current source.
+resolve_app() {
+    if [ -n "${FINDERADB_APP:-}" ]; then echo "$FINDERADB_APP"; return; fi
+    local dir
+    dir=$(xcodebuild -project FinderADB.xcodeproj -scheme FinderADB -configuration Debug \
+            -destination 'platform=macOS' -showBuildSettings 2>/dev/null \
+          | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{print $2; exit}')
+    [ -n "$dir" ] && [ -d "$dir/FinderADB.app" ] && echo "$dir/FinderADB.app"
+}
+APP="$(resolve_app)"
+if [ -z "$APP" ]; then
+    echo "!! could not locate a built FinderADB.app — run 'make app' first"
+    exit 1
+fi
+echo "==> using $APP"
+
+echo "==> stopping the app"
 pkill -x FinderADB 2>/dev/null || true
 sleep 2
+
+# Removing the domain through NSFileProviderManager is the only way to make the
+# system discard its replica. Without this, cached item capabilities survive
+# every other kind of reset — a folder that became writable still reads as
+# read-only, because Finder never asks us again.
+if [ -n "$APP" ]; then
+    echo "==> purging domains through the API"
+    "$APP/Contents/MacOS/FinderADB" --purge-domains >/dev/null 2>&1 &
+    sleep 4
+    pkill -x FinderADB 2>/dev/null || true
+fi
+
+echo "==> clearing our metadata store"
+rm -rf "$HOME/Library/Group Containers/NU2JM39S5P.dev.afridi.finderadb/domains"
 
 if [ -d "$STATE" ]; then
     echo "==> clearing cached domain state"
@@ -30,14 +63,10 @@ killall fileproviderd 2>/dev/null || true
 sleep 2
 
 if [ "${1:-}" = "--relaunch" ]; then
-    APP="${FINDERADB_APP:-$(find "$HOME/Library/Developer/Xcode/DerivedData" \
-        -maxdepth 5 -name FinderADB.app -path "*/Debug/*" 2>/dev/null | head -1)}"
     if [ -n "$APP" ]; then
-        echo "==> re-registering and launching $APP"
+        echo "==> re-registering and launching"
         /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
         open "$APP"
-    else
-        echo "!! could not find a built FinderADB.app; set FINDERADB_APP"
     fi
 fi
 
