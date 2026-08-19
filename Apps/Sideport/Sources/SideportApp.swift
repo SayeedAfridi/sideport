@@ -11,9 +11,12 @@ struct SideportApp: App {
         MenuBarExtra {
             MenuContent(controller: delegate.controller)
         } label: {
-            Image(systemName: delegate.controller.devices.contains { $0.state.isUsable }
-                  ? "iphone.gen3"
-                  : "iphone.gen3.slash")
+            // Template PDFs from scripts/make-glyph.swift — AppKit tints them
+            // to whatever the menu bar currently is.
+            Image(delegate.controller.devices.contains { $0.state.isUsable }
+                  ? "MenuBarIcon"
+                  : "MenuBarIconOffline")
+                .renderingMode(.template)
         }
         .menuBarExtraStyle(.menu)
     }

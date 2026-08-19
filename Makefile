@@ -13,8 +13,9 @@ app: project        ## Build the container app and its extension
 	xcodebuild -project Sideport.xcodeproj -scheme Sideport \
 		-configuration Debug -destination 'platform=macOS' build
 
-icon:               ## Regenerate the app icon set from the SF Symbol source
+icon:               ## Regenerate the app icon set and menu bar glyphs from their vector source
 	swift scripts/make-icon.swift Apps/Sideport/Assets.xcassets/AppIcon.appiconset
+	swift scripts/make-glyph.swift Apps/Sideport/Assets.xcassets
 
 reset-domains:      ## Tear down every registered File Provider domain
 	./scripts/reset-domain.sh
