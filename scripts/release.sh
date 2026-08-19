@@ -32,19 +32,25 @@ step "Regenerate project"
 step "Test before shipping"
 (cd "$ROOT" && swift test 2>&1 | tail -3)
 
+# Automatic signing needs permission to fetch — and on a first run, create —
+# the Developer ID profiles for the app, the extension and the App Group.
+# Without -allowProvisioningUpdates xcodebuild refuses to touch them and fails
+# on a machine that has not built this before.
 step "Archive (Release)"
 xcodebuild -project "$ROOT/FinderADB.xcodeproj" \
     -scheme FinderADB \
     -configuration Release \
     -archivePath "$ARCHIVE" \
     -destination 'generic/platform=macOS' \
+    -allowProvisioningUpdates \
     archive | tail -5
 
 step "Export with Developer ID"
 xcodebuild -exportArchive \
     -archivePath "$ARCHIVE" \
     -exportPath "$EXPORT" \
-    -exportOptionsPlist "$ROOT/scripts/release/ExportOptions.plist" | tail -5
+    -exportOptionsPlist "$ROOT/scripts/release/ExportOptions.plist" \
+    -allowProvisioningUpdates | tail -5
 [ -d "$APP" ] || die "export produced no app at $APP"
 
 step "Verify what we are about to ship"
@@ -56,15 +62,34 @@ APPEX="$APP/Contents/PlugIns/FinderADBFileProvider.appex"
 [ -d "$APPEX" ] || die "the extension is missing from the exported app"
 codesign --verify --strict --verbose=2 "$APPEX" 2>&1 | sed 's/^/  /'
 
+# Each fact is captured into a variable before it is judged, the same way
+# build-local-dmg.sh does, and for the same reason. Reading these through a
+# pipeline under `set -o pipefail` makes the check depend on codesign's exit
+# status rather than on what it said: `grep -q` exits at its first match, the
+# still-writing codesign dies of SIGPIPE, and a properly hardened bundle is
+# reported as unhardened. That failure is silent until the day the signing
+# certificate finally exists and this step runs for real.
 for target in "$APP" "$APPEX"; do
     name=$(basename "$target")
-    codesign -d --entitlements - --xml "$target" 2>/dev/null \
-        | plutil -convert xml1 -o - - 2>/dev/null \
-        | grep -q "get-task-allow" \
-        && die "$name still carries get-task-allow — that is a debug entitlement"
-    codesign -d --verbose=2 "$target" 2>&1 | grep -q "flags=.*runtime" \
-        || die "$name is not hardened; notarization will reject it"
-    printf '  %s: hardened, no debug entitlement\n' "$name"
+
+    ENTS=$(codesign -d --entitlements - --xml "$target" 2>/dev/null \
+        | plutil -convert xml1 -o - - 2>/dev/null || true)
+    SIG=$(codesign -d --verbose=2 "$target" 2>&1 || true)
+
+    case "$ENTS" in
+        *get-task-allow*)
+            die "$name still carries get-task-allow — that is a debug entitlement" ;;
+    esac
+    case "$ENTS" in
+        *"$TEAM.dev.afridi.finderadb"*) : ;;
+        *) die "$name lost its App Group — the extension and app could not share a store" ;;
+    esac
+    case "$SIG" in
+        *runtime*) : ;;
+        *) die "$name is not hardened; notarization will reject it" ;;
+    esac
+
+    printf '  %s: hardened, App Group intact, no debug entitlement\n' "$name"
 done
 
 step "Build the disk image"
@@ -92,7 +117,17 @@ xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 
 step "Final check, as a first-time user's Mac would see it"
-spctl --assess --type open --context context:primary-signature -vv "$DMG" 2>&1 | sed 's/^/  /'
+# Only meaningful while Gatekeeper assessment is enabled. With it off, spctl
+# accepts everything and reports "override=security disabled" — a pass that
+# says nothing about the Mac we are actually shipping to, which is worse than
+# no check at all.
+if spctl --status 2>&1 | grep -q "assessments enabled"; then
+    spctl --assess --type open --context context:primary-signature -vv "$DMG" 2>&1 | sed 's/^/  /'
+else
+    echo "  skipped: Gatekeeper assessment is disabled on this Mac, so spctl"
+    echo "  would accept the image no matter how it was signed. Re-enable with"
+    echo "  'sudo spctl --master-enable' to check this properly."
+fi
 
 echo
 echo "Ready: $DMG"
