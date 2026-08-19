@@ -69,11 +69,19 @@ final class TransferMonitor {
         let uploading: Progress
         let downloading: Progress
         var tokens: [NSKeyValueObservation] = []
+        var uploadFloor = Floor()
+        var downloadFloor = Floor()
 
         init(uploading: Progress, downloading: Progress) {
             self.uploading = uploading
             self.downloading = downloading
         }
+    }
+
+    /// The furthest a direction has got through the total it is working on.
+    private struct Floor {
+        var total: Int64 = -1
+        var completed: Int64 = 0
     }
 
     private var watches: [String: Watch] = [:]
@@ -140,8 +148,8 @@ final class TransferMonitor {
 
     private func publish(_ serial: String) {
         guard let watch = watches[serial] else { return }
-        let current = DeviceTransfers(uploading: snapshot(watch.uploading),
-                                      downloading: snapshot(watch.downloading))
+        let current = DeviceTransfers(uploading: snapshot(watch.uploading, floor: &watch.uploadFloor),
+                                      downloading: snapshot(watch.downloading, floor: &watch.downloadFloor))
         guard current != latest[serial] else { return }
         // Debug rather than info: this fires per progress update, which during a
         // large copy is several times a second.
@@ -163,13 +171,31 @@ final class TransferMonitor {
     /// Idle is spelled "finished, with every count set to 1". Reading that as a
     /// real figure would leave the menu claiming one item forever, so the
     /// finished state is turned back into zeroes before anything else looks.
-    private func snapshot(_ progress: Progress) -> TransferProgress {
-        guard !progress.isFinished else { return TransferProgress() }
+    private func snapshot(_ progress: Progress, floor: inout Floor) -> TransferProgress {
+        guard !progress.isFinished else {
+            floor = Floor()
+            return TransferProgress()
+        }
+
+        // Indeterminate is -1, which would print as a negative amount remaining.
+        let total = max(progress.totalUnitCount, 0)
+
+        // The system re-sums as items complete, and the raw byte counter steps
+        // *backwards* when it does: 336 MB back to 251 MB of the same 503 MB
+        // mid-copy, and all the way to zero on the last file. Rendered as bytes
+        // remaining, that reads as the copy growing just before it finishes —
+        // which is the same kind of lie this whole file exists to stop telling.
+        //
+        // So a direction is held to its high-water mark for as long as the
+        // total it belongs to is unchanged. A total that moves is new work
+        // arriving, and resets it.
+        if total != floor.total { floor = Floor(total: total, completed: 0) }
+        let completed = min(max(max(progress.completedUnitCount, 0), floor.completed), total)
+        floor.completed = completed
+
         return TransferProgress(completedItems: progress.fileCompletedCount ?? 0,
                                 totalItems: progress.fileTotalCount ?? 0,
-                                completedBytes: max(progress.completedUnitCount, 0),
-                                // Indeterminate is -1, which would print as a
-                                // negative amount remaining.
-                                totalBytes: max(progress.totalUnitCount, 0))
+                                completedBytes: completed,
+                                totalBytes: total)
     }
 }
