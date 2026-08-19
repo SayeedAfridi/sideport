@@ -8,8 +8,9 @@ Mount Android devices in macOS Finder over **adb** — no MTP, no macFUSE, no ke
 |---|---|
 | `AdbKit` — native Swift adb client | ✅ built and verified against hardware |
 | `adbctl` — CLI harness | ✅ 17/17 self-test checks pass |
-| File Provider extension | ⬜ next |
-| Container app (device discovery, domain registration) | ⬜ next |
+| File Provider extension | ✅ browse, fetch, ranged reads, writes, live change detection |
+| Container app (device discovery, domain registration) | ✅ menu bar app, transfer status, settings |
+| Signed and notarized DMG | ✅ `make release` |
 
 ## Why the wire protocol instead of the `adb` binary
 
@@ -114,3 +115,25 @@ Xiaomi 25053PC47I (`onyx`), USB, platform-tools 37.0.0:
 
 That is the USB link limit, so the optional `sendrecv_v2` compressed transfer
 modes the device advertises (`lz4`, `zstd`, `brotli`) would buy nothing here.
+
+## Documentation
+
+[`docs/`](docs/) explains the parts that are not obvious from the code:
+
+- [architecture.md](docs/architecture.md) — the process split and why it exists
+- [adb-protocol.md](docs/adb-protocol.md) — the wire protocol reference
+- [file-provider.md](docs/file-provider.md) — how Finder's calls become device operations
+- [change-detection.md](docs/change-detection.md) — identifiers, versions, and the watcher
+- [decisions.md](docs/decisions.md) — why the load-bearing choices were made
+- [troubleshooting.md](docs/troubleshooting.md) — traps that misdirect
+- [releasing.md](docs/releasing.md) — signing and notarization
+
+## Contributing
+
+Bug reports and patches are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for
+the build, the test gates, and the parts of the protocol that fail silently when
+they are wrong.
+
+## License
+
+[MIT](LICENSE) © Sayeed Afridi
