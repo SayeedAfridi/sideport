@@ -110,7 +110,7 @@ change be missed. Documented, not silently ignored.
 
 ## 4. Watching the device
 
-[`InotifyWatcher`](../Apps/FinderADBFileProvider/Sources/InotifyWatcher.swift)
+[`InotifyWatcher`](../Apps/SideportFileProvider/Sources/InotifyWatcher.swift)
 runs `inotifyd - <dir>:ncdwmyD` over one long-lived `shell,v2` connection.
 Events arrive live — a photo taken on the phone reaches Finder without anyone
 asking. Change propagation is ~0.3 s.

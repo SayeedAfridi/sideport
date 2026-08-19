@@ -4,7 +4,7 @@ import ServiceManagement
 import SwiftUI
 
 @main
-struct FinderADBApp: App {
+struct SideportApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
@@ -44,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        Log.domain.info("FinderADB launched")
+        Log.domain.info("Sideport launched")
         controller.start()
     }
 
@@ -100,7 +100,7 @@ struct MenuContent: View {
         Divider()
         settingsSection
         Divider()
-        Button("Quit Finder ADB") { NSApplication.shared.terminate(nil) }
+        Button("Quit Sideport") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }
 
@@ -111,7 +111,7 @@ struct MenuContent: View {
         if controller.needsUserEnable {
             // Without this the device mounts and browses normally and every
             // write fails — a volume that looks writable and is not.
-            Text("Turn on “Finder ADB” in System Settings")
+            Text("Turn on “Sideport” in System Settings")
             Text("Writing to the device is disabled until then.")
             Button("Open Login Items & Extensions…") { controller.openExtensionSettings() }
             Divider()

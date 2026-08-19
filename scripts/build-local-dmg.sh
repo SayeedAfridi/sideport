@@ -13,9 +13,9 @@ TEAM="NU2JM39S5P"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/.release"
 DERIVED="$BUILD/DerivedData"
-APP="$DERIVED/Build/Products/Release/FinderADB.app"
+APP="$DERIVED/Build/Products/Release/Sideport.app"
 STAGE="$BUILD/stage"
-DMG="$BUILD/FinderADB.dmg"
+DMG="$BUILD/Sideport.dmg"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 die()  { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -57,8 +57,8 @@ step "Build Release"
 #
 # With a Developer ID certificate the export drops it properly. Until then it
 # stays, and that is one of the things this build cannot be clean about.
-xcodebuild -project "$ROOT/FinderADB.xcodeproj" \
-    -scheme FinderADB \
+xcodebuild -project "$ROOT/Sideport.xcodeproj" \
+    -scheme Sideport \
     -configuration Release \
     -derivedDataPath "$DERIVED" \
     -destination 'platform=macOS' \
@@ -66,7 +66,7 @@ xcodebuild -project "$ROOT/FinderADB.xcodeproj" \
 [ -d "$APP" ] || die "no app at $APP"
 
 step "Verify what we built"
-APPEX="$APP/Contents/PlugIns/FinderADBFileProvider.appex"
+APPEX="$APP/Contents/PlugIns/SideportFileProvider.appex"
 [ -d "$APPEX" ] || die "the extension is missing — the mount would never appear"
 
 # Each fact is captured into a variable before it is judged. Reading these
@@ -92,7 +92,7 @@ for target in "$APPEX" "$APP"; do
             die "$name has no get-task-allow, so a development certificate cannot authorise it and the extension will not launch" ;;
     esac
     case "$ENTS" in
-        *"$TEAM.dev.afridi.finderadb"*) : ;;
+        *"$TEAM.dev.afridi.sideport"*) : ;;
         *) die "$name lost its App Group — the extension and app could not share a store" ;;
     esac
     case "$SIG" in
@@ -107,13 +107,13 @@ step "Package"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "FinderADB" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+hdiutil create -volname "Sideport" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 codesign --sign "$IDENTITY" --timestamp "$DMG" 2>/dev/null \
     || codesign --sign "$IDENTITY" "$DMG"
 
 step "Check the image opens and holds a valid app"
 MOUNT=$(hdiutil attach "$DMG" -nobrowse -readonly | grep -o '/Volumes/.*' | head -1)
-codesign --verify --deep --strict "$MOUNT/FinderADB.app" && echo "  app inside the image verifies"
+codesign --verify --deep --strict "$MOUNT/Sideport.app" && echo "  app inside the image verifies"
 hdiutil detach "$MOUNT" >/dev/null
 
 echo
@@ -124,5 +124,5 @@ if [ "$NOTARIZABLE" = no ]; then
     echo "anywhere else. It also still carries get-task-allow, because a"
     echo "development certificate cannot authorise a build without it."
     echo
-    echo "To install:  open $DMG   →  drag FinderADB to Applications"
+    echo "To install:  open $DMG   →  drag Sideport to Applications"
 fi

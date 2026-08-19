@@ -5,18 +5,18 @@ import os
 ///
 /// These are in the package rather than duplicated per target so a typo cannot
 /// silently split the two processes into separate App Group containers.
-public enum FinderADB {
+public enum Sideport {
     public static let teamID = "NU2JM39S5P"
-    public static let appBundleID = "dev.afridi.finderadb"
-    public static let extensionBundleID = "dev.afridi.finderadb.FileProvider"
+    public static let appBundleID = "dev.afridi.sideport"
+    public static let extensionBundleID = "dev.afridi.sideport.FileProvider"
 
     /// **Team-ID prefixed on purpose.** iOS uses `group.<id>`; macOS requires the
     /// team identifier first, and since Sequoia the sandbox enforces it —
     /// `containerURL(forSecurityApplicationGroupIdentifier:)` returns nil for an
     /// unprefixed group, with no diagnostic to explain why.
-    public static let appGroup = "NU2JM39S5P.dev.afridi.finderadb"
+    public static let appGroup = "NU2JM39S5P.dev.afridi.sideport"
 
-    public static let subsystem = "dev.afridi.finderadb"
+    public static let subsystem = "dev.afridi.sideport"
 
     /// Where a device's user storage lives once `/sdcard`'s two symlink hops are
     /// resolved. Used as a fallback; the real root is resolved per device.
@@ -72,10 +72,10 @@ public enum FinderADB {
 /// Structured logging, split by concern so `log stream` can be filtered to the
 /// thing actually being debugged.
 public enum Log {
-    public static let enumeration = Logger(subsystem: FinderADB.subsystem, category: "enumeration")
-    public static let fetch = Logger(subsystem: FinderADB.subsystem, category: "fetch")
-    public static let write = Logger(subsystem: FinderADB.subsystem, category: "write")
-    public static let watch = Logger(subsystem: FinderADB.subsystem, category: "watch")
-    public static let adb = Logger(subsystem: FinderADB.subsystem, category: "adb")
-    public static let domain = Logger(subsystem: FinderADB.subsystem, category: "domain")
+    public static let enumeration = Logger(subsystem: Sideport.subsystem, category: "enumeration")
+    public static let fetch = Logger(subsystem: Sideport.subsystem, category: "fetch")
+    public static let write = Logger(subsystem: Sideport.subsystem, category: "write")
+    public static let watch = Logger(subsystem: Sideport.subsystem, category: "watch")
+    public static let adb = Logger(subsystem: Sideport.subsystem, category: "adb")
+    public static let domain = Logger(subsystem: Sideport.subsystem, category: "domain")
 }

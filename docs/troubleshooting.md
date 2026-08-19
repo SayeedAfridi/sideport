@@ -54,7 +54,7 @@ is for.
 **An implicit default domain steals the sidebar label.** Without
 `NSFileProviderDefaultDomainEnabled: false` the system creates a nameless default
 domain beside the real ones and Finder labels *that* with the containing app's
-name. The symptom is a sidebar entry reading "FinderADB" while `Domains.plist`
+name. The symptom is a sidebar entry reading "Sideport" while `Domains.plist`
 plainly shows the device's name — the setting looks correct because it is; a
 second domain is simply winning.
 
@@ -82,10 +82,10 @@ doubt the code.
 
 ```sh
 # Live logs from both processes
-/usr/bin/log stream --predicate 'subsystem == "dev.afridi.finderadb"' --level debug
+/usr/bin/log stream --predicate 'subsystem == "dev.afridi.sideport"' --level debug
 
 # Just one area: enumeration, fetch, write, watch, adb, domain
-/usr/bin/log stream --predicate 'subsystem == "dev.afridi.finderadb" AND category == "watch"'
+/usr/bin/log stream --predicate 'subsystem == "dev.afridi.sideport" AND category == "watch"'
 
 # Start clean
 make reset-domains

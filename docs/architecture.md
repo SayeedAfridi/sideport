@@ -8,7 +8,7 @@
 └───────────────┬──────────────────────────────────────────────┘
                 │ NSFileProvider (system-mediated)
 ┌───────────────▼──────────────────────────────────────────────┐
-│ FinderADBFileProvider.appex        SANDBOXED, one per device  │
+│ SideportFileProvider.appex        SANDBOXED, one per device  │
 │   NSFileProviderReplicatedExtension                           │
 │   ├─ AdbKit                                                   │
 │   └─ MetadataStore (SQLite, in the App Group container)       │
@@ -23,7 +23,7 @@
 └──────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────┐
-│ FinderADB.app          NOT sandboxed, menu bar, login item    │
+│ Sideport.app          NOT sandboxed, menu bar, login item    │
 │   ├─ AdbKit (deviceChanges → add/remove NSFileProviderDomain) │
 │   ├─ finds and launches the user's adb binary                 │
 │   └─ settings, transfer status, diagnostics                   │
@@ -41,7 +41,7 @@ could not shell out even if we wanted it to.
 `adb` binary, which lives wherever they installed platform-tools, and start the
 server when it is not running. A sandboxed app cannot reach
 `~/Library/Android/sdk/platform-tools/adb`. See
-[`AdbServerController`](../Apps/FinderADB/Sources/AdbServerController.swift) for
+[`AdbServerController`](../Apps/Sideport/Sources/AdbServerController.swift) for
 the search order — `ANDROID_HOME` and `ANDROID_SDK_ROOT` win over any guess.
 
 **The adb server is the user's, not ours.** We never start a private server on a
@@ -64,15 +64,15 @@ themselves. The product adds an interface, not authority.
 | [`AdbKit`](../Sources/AdbKit) | library | adb host, sync and shell protocols. No macOS-specific types, no File Provider. |
 | [`AdbFinderCore`](../Sources/AdbFinderCore) | library | Identity mapping, metadata store, change log, error mapping, fetch planning. Pure logic. |
 | [`adbctl`](../Sources/adbctl) | executable | CLI harness: `devices`, `ls`, `pull`, `push`, `watch`, `selftest`, `bench`. |
-| [`FinderADBFileProvider`](../Apps/FinderADBFileProvider) | appex | Translates `NSFileProvider` calls into `AdbFinderCore` + `AdbKit`. Thin by design. |
-| [`FinderADB`](../Apps/FinderADB) | app | Device discovery, domain lifecycle, adb server management, menu bar UX. |
+| [`SideportFileProvider`](../Apps/SideportFileProvider) | appex | Translates `NSFileProvider` calls into `AdbFinderCore` + `AdbKit`. Thin by design. |
+| [`Sideport`](../Apps/Sideport) | app | Device discovery, domain lifecycle, adb server management, menu bar UX. |
 
 `AdbFinderCore` exists so the hard parts — stable identifiers, sync anchors,
 change replay, error mapping, partial-fetch policy — can be tested in
 milliseconds with no device attached and no domain registered. Debugging a File
 Provider extension is slow and misleading; keeping logic out of it is the main
 defence, and it is why
-[`FileProviderExtension`](../Apps/FinderADBFileProvider/Sources/FileProviderExtension.swift)
+[`FileProviderExtension`](../Apps/SideportFileProvider/Sources/FileProviderExtension.swift)
 reads as a translation layer and nothing else.
 
 Keep the dependency direction: `AdbKit` knows nothing about File Provider, and
@@ -83,7 +83,7 @@ the extension target holds no decisions worth testing.
 One App Group container, one SQLite database **per device domain**:
 
 ```
-NU2JM39S5P.dev.afridi.finderadb/
+NU2JM39S5P.dev.afridi.sideport/
   domains/
     <device-serial>/
       metadata.sqlite      identity map, change log, sync anchor

@@ -5,7 +5,7 @@ import Testing
 @Suite("Device root resolution")
 struct DeviceRootTests {
     @Test func theResolvedPathIsTriedFirst() {
-        let candidates = FinderADB.rootCandidates(resolved: "/storage/emulated/0\n", succeeded: true)
+        let candidates = Sideport.rootCandidates(resolved: "/storage/emulated/0\n", succeeded: true)
         #expect(candidates == ["/storage/emulated/0"])
     }
 
@@ -20,28 +20,28 @@ struct DeviceRootTests {
     /// candidate behind it, for the caller to fall back to when the first proves
     /// unlistable.
     @Test func anUnmountedResolutionStillLeavesTheDefaultToFallBackOn() {
-        let candidates = FinderADB.rootCandidates(resolved: "/storage/self/primary", succeeded: true)
+        let candidates = Sideport.rootCandidates(resolved: "/storage/self/primary", succeeded: true)
         #expect(candidates == ["/storage/self/primary", "/storage/emulated/0"])
     }
 
     @Test func aFailedOrEmptyResolutionFallsStraightToTheDefault() {
-        #expect(FinderADB.rootCandidates(resolved: "/storage/emulated/0", succeeded: false)
+        #expect(Sideport.rootCandidates(resolved: "/storage/emulated/0", succeeded: false)
                 == ["/storage/emulated/0"])
-        #expect(FinderADB.rootCandidates(resolved: nil, succeeded: true)
+        #expect(Sideport.rootCandidates(resolved: nil, succeeded: true)
                 == ["/storage/emulated/0"])
-        #expect(FinderADB.rootCandidates(resolved: "", succeeded: true)
+        #expect(Sideport.rootCandidates(resolved: "", succeeded: true)
                 == ["/storage/emulated/0"])
     }
 
     /// A relative answer would be resolved against whatever directory the next
     /// shell happened to start in, which is a different bug wearing the same hat.
     @Test func aRelativeAnswerIsNotACandidate() {
-        #expect(FinderADB.rootCandidates(resolved: "emulated/0", succeeded: true)
+        #expect(Sideport.rootCandidates(resolved: "emulated/0", succeeded: true)
                 == ["/storage/emulated/0"])
     }
 
     @Test func theDefaultIsNeverListedTwice() {
-        let candidates = FinderADB.rootCandidates(resolved: "  /storage/emulated/0  ", succeeded: true)
+        let candidates = Sideport.rootCandidates(resolved: "  /storage/emulated/0  ", succeeded: true)
         #expect(candidates == ["/storage/emulated/0"])
     }
 }

@@ -58,7 +58,7 @@ actor DeviceSession {
 
     private func openStore() async throws -> MetadataStore {
         let root = try await resolveRoot()
-        let url = try FinderADB.storeURL(forSerial: serial)
+        let url = try Sideport.storeURL(forSerial: serial)
         let opened = try MetadataStore(path: url.path, deviceRoot: root)
 
         // The root row is seeded with a placeholder mode, so its write
@@ -103,7 +103,7 @@ actor DeviceSession {
         if let deviceRoot { return deviceRoot }
 
         let result = try? await client.shell("readlink -f /sdcard", on: selector)
-        let candidates = FinderADB.rootCandidates(resolved: result?.stdout,
+        let candidates = Sideport.rootCandidates(resolved: result?.stdout,
                                                   succeeded: result?.succeeded == true)
 
         for candidate in candidates {
@@ -119,7 +119,7 @@ actor DeviceSession {
                     """)
             }
         }
-        throw CoreError.storageUnavailable(candidates.first ?? FinderADB.defaultDeviceRoot)
+        throw CoreError.storageUnavailable(candidates.first ?? Sideport.defaultDeviceRoot)
     }
 
     // MARK: - Enumeration
@@ -325,7 +325,7 @@ actor DeviceSession {
             Log.watch.error("cannot start watcher: store unavailable")
             return
         }
-        let root = (try? store.path(of: MetadataStore.rootID)) ?? FinderADB.defaultDeviceRoot
+        let root = (try? store.path(of: MetadataStore.rootID)) ?? Sideport.defaultDeviceRoot
         await startWatcherIfNeeded().watch(root)
     }
 

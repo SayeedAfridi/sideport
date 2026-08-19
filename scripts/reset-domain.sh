@@ -11,7 +11,7 @@
 # Only this provider's own state is touched; other providers are left alone.
 set -euo pipefail
 
-PROVIDER="dev.afridi.finderadb.FileProvider"
+PROVIDER="dev.afridi.sideport.FileProvider"
 STATE="$HOME/Library/Application Support/FileProvider/$PROVIDER"
 
 # Ask xcodebuild where the product actually is. Searching DerivedData by hand
@@ -19,22 +19,22 @@ STATE="$HOME/Library/Application Support/FileProvider/$PROVIDER"
 # and picking the wrong one silently launches a stale build — every subsequent
 # symptom then looks like a code bug in the current source.
 resolve_app() {
-    if [ -n "${FINDERADB_APP:-}" ]; then echo "$FINDERADB_APP"; return; fi
+    if [ -n "${SIDEPORT_APP:-}" ]; then echo "$SIDEPORT_APP"; return; fi
     local dir
-    dir=$(xcodebuild -project FinderADB.xcodeproj -scheme FinderADB -configuration Debug \
+    dir=$(xcodebuild -project Sideport.xcodeproj -scheme Sideport -configuration Debug \
             -destination 'platform=macOS' -showBuildSettings 2>/dev/null \
           | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{print $2; exit}')
-    [ -n "$dir" ] && [ -d "$dir/FinderADB.app" ] && echo "$dir/FinderADB.app"
+    [ -n "$dir" ] && [ -d "$dir/Sideport.app" ] && echo "$dir/Sideport.app"
 }
 APP="$(resolve_app)"
 if [ -z "$APP" ]; then
-    echo "!! could not locate a built FinderADB.app — run 'make app' first"
+    echo "!! could not locate a built Sideport.app — run 'make app' first"
     exit 1
 fi
 echo "==> using $APP"
 
 echo "==> stopping the app"
-pkill -x FinderADB 2>/dev/null || true
+pkill -x Sideport 2>/dev/null || true
 sleep 2
 
 # Removing the domain through NSFileProviderManager is the only way to make the
@@ -43,13 +43,13 @@ sleep 2
 # read-only, because Finder never asks us again.
 if [ -n "$APP" ]; then
     echo "==> purging domains through the API"
-    "$APP/Contents/MacOS/FinderADB" --purge-domains >/dev/null 2>&1 &
+    "$APP/Contents/MacOS/Sideport" --purge-domains >/dev/null 2>&1 &
     sleep 4
-    pkill -x FinderADB 2>/dev/null || true
+    pkill -x Sideport 2>/dev/null || true
 fi
 
 echo "==> clearing our metadata store"
-rm -rf "$HOME/Library/Group Containers/NU2JM39S5P.dev.afridi.finderadb/domains"
+rm -rf "$HOME/Library/Group Containers/NU2JM39S5P.dev.afridi.sideport/domains"
 
 if [ -d "$STATE" ]; then
     echo "==> clearing cached domain state"

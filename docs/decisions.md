@@ -61,8 +61,8 @@ the `SEND "path,mode"` comma ambiguity as a bonus. Non-negotiable.
 
 ## D8 — Team-ID-prefixed App Group
 
-App `dev.afridi.finderadb`, extension `dev.afridi.finderadb.FileProvider`, group
-`NU2JM39S5P.dev.afridi.finderadb`.
+App `dev.afridi.sideport`, extension `dev.afridi.sideport.FileProvider`, group
+`NU2JM39S5P.dev.afridi.sideport`.
 
 The team-ID prefix is a macOS requirement, not a style choice. iOS uses
 `group.<id>`; macOS wants the team ID first, and since Sequoia the sandbox
@@ -72,7 +72,7 @@ diagnostic at all.
 
 ## D9 — Immediate delete, no trash
 
-*Decided 2026-08-18.* A `.Trash-finderadb/` directory would be invisible to the
+*Decided 2026-08-18.* A `.Trash-sideport/` directory would be invisible to the
 phone's own gallery and file manager, so it would consume storage the user could
 not find **from the phone** — a leak diagnosable only from the Mac.
 

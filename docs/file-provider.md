@@ -1,19 +1,19 @@
 # The File Provider side
 
 How Finder's calls become device operations. The Finder-facing surface is
-[`FileProviderExtension`](../Apps/FinderADBFileProvider/Sources/FileProviderExtension.swift),
+[`FileProviderExtension`](../Apps/SideportFileProvider/Sources/FileProviderExtension.swift),
 which is deliberately thin: it translates and maps errors, and holds nothing
 worth testing. The work happens in
-[`DeviceSession`](../Apps/FinderADBFileProvider/Sources/DeviceSession.swift) and
+[`DeviceSession`](../Apps/SideportFileProvider/Sources/DeviceSession.swift) and
 in [`AdbFinderCore`](../Sources/AdbFinderCore).
 
 ## Bundles and entitlements
 
 | Target | Bundle ID | Sandbox |
 |---|---|---|
-| Container app | `dev.afridi.finderadb` | no |
-| Extension | `dev.afridi.finderadb.FileProvider` | yes, by force |
-| App Group | `NU2JM39S5P.dev.afridi.finderadb` | shared container |
+| Container app | `dev.afridi.sideport` | no |
+| Extension | `dev.afridi.sideport.FileProvider` | yes, by force |
+| App Group | `NU2JM39S5P.dev.afridi.sideport` | shared container |
 
 Extension entitlements: `app-sandbox` (mandatory), `network.client` (loopback to
 the adb server), `application-groups` (the shared metadata store). That is the
@@ -35,7 +35,7 @@ edit the generated file.
 ## Domain lifecycle
 
 One `NSFileProviderDomain` per device, owned by the container app
-([`DomainController`](../Apps/FinderADB/Sources/DomainController.swift)):
+([`DomainController`](../Apps/Sideport/Sources/DomainController.swift)):
 
 ```
 AdbClient.deviceChanges()
@@ -69,11 +69,11 @@ storage is still mounting resolves `/sdcard` to `/storage/self/primary` and stop
 there, and taking that string on faith pinned an entire extension lifetime to a
 directory that could not be read. Each candidate is **proven listable** before it
 is cached, and the documented default is always tried last. See
-[`FinderADB.rootCandidates`](../Sources/AdbFinderCore/Identifiers.swift).
+[`Sideport.rootCandidates`](../Sources/AdbFinderCore/Identifiers.swift).
 
 ## The item model
 
-[`ProviderItem`](../Apps/FinderADBFileProvider/Sources/ProviderItem.swift) maps a
+[`ProviderItem`](../Apps/SideportFileProvider/Sources/ProviderItem.swift) maps a
 stored row to `NSFileProviderItem`:
 
 | Field | Source |
@@ -124,7 +124,7 @@ the system can detect a race with a device-side change.
 
 A replicated provider materialises whole files or nothing, which means opening a
 7 GB archive downloads 7 GB before anything can read its footer.
-[`PartialFetching`](../Apps/FinderADBFileProvider/Sources/PartialFetching.swift)
+[`PartialFetching`](../Apps/SideportFileProvider/Sources/PartialFetching.swift)
 implements `NSFileProviderPartialContentFetching` over ranged `dd` reads: 76 ms
 instead of 218 seconds for a reader that wants the last 64 KB.
 
@@ -148,13 +148,13 @@ Never `SEND` onto a live path — an interrupted transfer would truncate the fil
 the user already had.
 
 ```
-SEND → <dir>/.finderadb-tmp-<uuid>
+SEND → <dir>/.sideport-tmp-<uuid>
 mv   → <dir>/<final name>
 ```
 
 `mv` within a directory is atomic on the device's filesystem. On failure the
 staging file is removed; on unplug it is orphaned, and the sweep on reconnect
-clears stale `.finderadb-tmp-*`. This also sidesteps the `SEND "path,mode"` comma
+clears stale `.sideport-tmp-*`. This also sidesteps the `SEND "path,mode"` comma
 ambiguity, since the staging name never contains one.
 
 ### Operation mapping
@@ -174,7 +174,7 @@ Every path goes through `adbShellQuote`.
 Finder writes `.DS_Store` into every directory it displays, and AppleDouble `._`
 sidecars beside real files on volumes without native xattr support. Left alone
 they would litter the phone and show up in its own gallery and file manager.
-[`SyncExclusions`](../Apps/FinderADBFileProvider/Sources/SyncExclusions.swift)
+[`SyncExclusions`](../Apps/SideportFileProvider/Sources/SyncExclusions.swift)
 returns `NSFileProviderErrorExcludedFromSync`, which keeps the file in the Mac's
 local replica — so Finder stays happy — while it is never uploaded.
 
@@ -204,7 +204,7 @@ saying so.
 
 The extension can only ever see the six sockets it holds open; the queue behind
 them belongs to the system, and the system's own progress is the only place it is
-counted. [`TransferMonitor`](../Apps/FinderADB/Sources/TransferMonitor.swift)
+counted. [`TransferMonitor`](../Apps/Sideport/Sources/TransferMonitor.swift)
 reads that and reports it in the menu bar, phrased as work remaining — "Uploading
 412 of 1072 — 6.8 GB left" — because that is the question someone opens the menu
 to ask.

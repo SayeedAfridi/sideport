@@ -25,14 +25,14 @@ public final class AdbClient: Sendable {
 
     public init(endpoint: AdbEndpoint = .default) {
         self.endpoint = endpoint
-        self.queue = DispatchQueue(label: "dev.finderadb.adbkit.io",
+        self.queue = DispatchQueue(label: "dev.sideport.adbkit.io",
                                    qos: .userInitiated,
                                    attributes: .concurrent)
         self.gate = OperationQueue()
         self.gate.underlyingQueue = queue
         self.gate.maxConcurrentOperationCount = 6
-        self.gate.name = "dev.finderadb.adbkit.io.gate"
-        self.streamingQueue = DispatchQueue(label: "dev.finderadb.adbkit.streams",
+        self.gate.name = "dev.sideport.adbkit.io.gate"
+        self.streamingQueue = DispatchQueue(label: "dev.sideport.adbkit.streams",
                                             qos: .utility,
                                             attributes: .concurrent)
     }
@@ -256,7 +256,7 @@ public final class AdbClient: Sendable {
 
     /// Prefix for in-flight uploads. Public so the orphan sweep and the
     /// enumerator can both recognise them.
-    public static let stagingPrefix = ".finderadb-tmp-"
+    public static let stagingPrefix = ".sideport-tmp-"
 
     static func stagingPath(for remotePath: String) -> String {
         let directory = (remotePath as NSString).deletingLastPathComponent

@@ -1,6 +1,6 @@
 # Documentation
 
-Reference material for anyone working on finder-adb. The [top-level
+Reference material for anyone working on Sideport. The [top-level
 README](../README.md) is the pitch and the quick start; this folder is the
 explanation.
 

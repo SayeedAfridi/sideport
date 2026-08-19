@@ -1,4 +1,4 @@
-# Contributing to finder-adb
+# Contributing to Sideport
 
 Thanks for looking. This is a small, deliberately opinionated project: it mounts
 an Android device in Finder by speaking adb's wire protocol directly, and almost
@@ -34,8 +34,8 @@ XcodeGen and a signing identity.
 Sources/AdbKit          adb wire protocol — host, sync, shell. No Finder, no AppKit.
 Sources/AdbFinderCore   provider logic — metadata store, identifiers, error mapping.
 Sources/adbctl          CLI harness — the fastest way to exercise a change.
-Apps/FinderADB          menu bar container app: discovery, domain registration.
-Apps/FinderADBFileProvider  the sandboxed extension Finder actually talks to.
+Apps/Sideport          menu bar container app: discovery, domain registration.
+Apps/SideportFileProvider  the sandboxed extension Finder actually talks to.
 ```
 
 Keep the dependency direction. `AdbKit` knows nothing about File Provider;
@@ -73,7 +73,7 @@ against a device, put the verification in `adbctl` and say so in the PR.
 `project.yml` is the source of truth for the Xcode side. These are generated and
 git-ignored:
 
-- `FinderADB.xcodeproj` (`make project`)
+- `Sideport.xcodeproj` (`make project`)
 - `Apps/*/Info.plist`, `Apps/*/*.entitlements`
 
 Edit `project.yml` and regenerate. A PR that changes the `.xcodeproj` will be
@@ -103,11 +103,11 @@ none:
 make reset-domains        # tear down every registered File Provider domain
 ```
 
-Logs go through `os.Logger` under the subsystem `dev.afridi.finderadb`, with
+Logs go through `os.Logger` under the subsystem `dev.afridi.sideport`, with
 categories `enumeration`, `fetch`, `write`, `watch`, `adb`, `domain`:
 
 ```sh
-log stream --predicate 'subsystem == "dev.afridi.finderadb"' --level debug
+log stream --predicate 'subsystem == "dev.afridi.sideport"' --level debug
 ```
 
 [docs/troubleshooting.md](docs/troubleshooting.md) collects the failures that

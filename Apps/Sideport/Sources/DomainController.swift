@@ -202,7 +202,7 @@ final class DomainController: ObservableObject {
         let name = (friendlyNames[device.serial] ?? device.displayName)
             .replacingOccurrences(of: " ", with: "")
         let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/CloudStorage/FinderADB-\(name)")
+            .appendingPathComponent("Library/CloudStorage/Sideport-\(name)")
         NSWorkspace.shared.open(url)
     }
 
@@ -222,7 +222,7 @@ final class DomainController: ObservableObject {
     /// enough that polling it would be noise.
     private func refreshCapacity(for device: AdbDevice) async {
         guard statuses[device.serial]?.totalBytes == nil else { return }
-        guard let capacity = try? await client.capacity(at: FinderADB.defaultDeviceRoot,
+        guard let capacity = try? await client.capacity(at: Sideport.defaultDeviceRoot,
                                                         on: .serial(device.serial)) else { return }
         statuses[device.serial, default: DeviceStatus()].totalBytes = capacity.total
         statuses[device.serial, default: DeviceStatus()].freeBytes = capacity.free

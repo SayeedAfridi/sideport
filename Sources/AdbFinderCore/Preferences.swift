@@ -27,7 +27,7 @@ public struct Preferences: @unchecked Sendable {
     public init() {
         // Falling back to `.standard` keeps the app usable if the entitlement is
         // missing; it just will not agree with the extension.
-        defaults = UserDefaults(suiteName: FinderADB.appGroup) ?? .standard
+        defaults = UserDefaults(suiteName: Sideport.appGroup) ?? .standard
     }
 
     private enum Key {

@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "finder-adb",
+    name: "sideport",
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "AdbKit", targets: ["AdbKit"]),

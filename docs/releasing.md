@@ -14,9 +14,9 @@ make preflight    # reports what is present, what is missing, the exact next
 | | |
 |---|---|
 | Team ID | `NU2JM39S5P` |
-| App bundle ID | `dev.afridi.finderadb` |
-| Extension bundle ID | `dev.afridi.finderadb.FileProvider` |
-| App Group | `NU2JM39S5P.dev.afridi.finderadb` |
+| App bundle ID | `dev.afridi.sideport` |
+| Extension bundle ID | `dev.afridi.sideport.FileProvider` |
+| App Group | `NU2JM39S5P.dev.afridi.sideport` |
 
 The team ID is the `OU` field of the certificate. The other identifier that
 appears in a certificate's *name* is the personal one — this was misread once,
@@ -50,7 +50,7 @@ when the Apple ID password changes, and it is scoped.
 — **you get exactly one download** — and note the Key ID and the Issuer ID.
 
 ```sh
-xcrun notarytool store-credentials finderadb-notary \
+xcrun notarytool store-credentials sideport-notary \
   --key ~/private_keys/AuthKey_<KEYID>.p8 \
   --key-id <KEYID> \
   --issuer <ISSUER-UUID>

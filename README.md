@@ -1,4 +1,4 @@
-# finder-adb
+# Sideport
 
 Mount Android devices in macOS Finder over **adb** — no MTP, no macFUSE, no kext.
 

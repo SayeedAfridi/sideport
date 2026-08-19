@@ -2,13 +2,13 @@
 // Generates the app icon set from an SF Symbol, so the icon is reproducible
 // from source rather than a binary blob nobody can edit.
 //
-//   swift scripts/make-icon.swift Apps/FinderADB/Assets.xcassets/AppIcon.appiconset
+//   swift scripts/make-icon.swift Apps/Sideport/Assets.xcassets/AppIcon.appiconset
 
 import AppKit
 
 let outputDirectory = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
-    : "Apps/FinderADB/Assets.xcassets/AppIcon.appiconset"
+    : "Apps/Sideport/Assets.xcassets/AppIcon.appiconset"
 
 /// Tints a template symbol by filling only its opaque pixels.
 func tinted(_ image: NSImage, _ color: NSColor) -> NSImage {

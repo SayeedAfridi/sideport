@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build, sign, notarize and staple a distributable FinderADB.dmg.
+# Build, sign, notarize and staple a distributable Sideport.dmg.
 #
 # Every step verifies rather than assumes: an unsigned nested appex, a stray
 # get-task-allow, or a notarization that "succeeded" without stapling all look
@@ -7,13 +7,13 @@
 set -euo pipefail
 
 TEAM="NU2JM39S5P"
-KEYCHAIN_PROFILE="${NOTARY_PROFILE:-finderadb-notary}"
+KEYCHAIN_PROFILE="${NOTARY_PROFILE:-sideport-notary}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/.release"
-ARCHIVE="$BUILD/FinderADB.xcarchive"
+ARCHIVE="$BUILD/Sideport.xcarchive"
 EXPORT="$BUILD/export"
-APP="$EXPORT/FinderADB.app"
-DMG="$BUILD/FinderADB.dmg"
+APP="$EXPORT/Sideport.app"
+DMG="$BUILD/Sideport.dmg"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 die()  { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -37,8 +37,8 @@ step "Test before shipping"
 # Without -allowProvisioningUpdates xcodebuild refuses to touch them and fails
 # on a machine that has not built this before.
 step "Archive (Release)"
-xcodebuild -project "$ROOT/FinderADB.xcodeproj" \
-    -scheme FinderADB \
+xcodebuild -project "$ROOT/Sideport.xcodeproj" \
+    -scheme Sideport \
     -configuration Release \
     -archivePath "$ARCHIVE" \
     -destination 'generic/platform=macOS' \
@@ -58,7 +58,7 @@ codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/  /'
 
 # The extension is the part that breaks quietly: it is signed separately and a
 # failure here still leaves a launchable app whose device mount never appears.
-APPEX="$APP/Contents/PlugIns/FinderADBFileProvider.appex"
+APPEX="$APP/Contents/PlugIns/SideportFileProvider.appex"
 [ -d "$APPEX" ] || die "the extension is missing from the exported app"
 codesign --verify --strict --verbose=2 "$APPEX" 2>&1 | sed 's/^/  /'
 
@@ -81,7 +81,7 @@ for target in "$APP" "$APPEX"; do
             die "$name still carries get-task-allow — that is a debug entitlement" ;;
     esac
     case "$ENTS" in
-        *"$TEAM.dev.afridi.finderadb"*) : ;;
+        *"$TEAM.dev.afridi.sideport"*) : ;;
         *) die "$name lost its App Group — the extension and app could not share a store" ;;
     esac
     case "$SIG" in
@@ -97,7 +97,7 @@ STAGE="$BUILD/stage"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "FinderADB" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+hdiutil create -volname "Sideport" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 codesign --sign "Developer ID Application" --timestamp "$DMG"
 
 step "Notarize"

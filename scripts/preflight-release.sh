@@ -5,10 +5,10 @@
 # what is missing, and the exact next action. It changes nothing.
 
 TEAM="NU2JM39S5P"
-APP_ID="dev.afridi.finderadb"
-EXT_ID="dev.afridi.finderadb.FileProvider"
+APP_ID="dev.afridi.sideport"
+EXT_ID="dev.afridi.sideport.FileProvider"
 GROUP="$TEAM.$APP_ID"
-KEYCHAIN_PROFILE="finderadb-notary"
+KEYCHAIN_PROFILE="sideport-notary"
 
 ok=0
 missing=0
@@ -17,7 +17,7 @@ say_miss() { printf '  \033[31m✗\033[0m %s\n'   "$1"; missing=$((missing+1)); 
 say_note() { printf '      %s\n' "$1"; }
 
 echo
-echo "FinderADB release preflight — team $TEAM"
+echo "Sideport release preflight — team $TEAM"
 echo
 
 echo "1. Signing identity"
