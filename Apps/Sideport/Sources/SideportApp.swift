@@ -11,14 +11,29 @@ struct SideportApp: App {
         MenuBarExtra {
             MenuContent(controller: delegate.controller)
         } label: {
-            // Template PDFs from scripts/make-glyph.swift — AppKit tints them
-            // to whatever the menu bar currently is.
-            Image(delegate.controller.devices.contains { $0.state.isUsable }
-                  ? "MenuBarIcon"
-                  : "MenuBarIconOffline")
-                .renderingMode(.template)
+            MenuBarLabel(controller: delegate.controller)
         }
         .menuBarExtraStyle(.menu)
+    }
+}
+
+/// The glyph in the menu bar, as its own view so that it watches the controller.
+///
+/// Reading `controller.devices` straight from the scene's `label` closure would
+/// compile and then never change: the scene observes the delegate, the delegate
+/// publishes nothing, and the controller's own changes reach only the views that
+/// observe it. The icon stayed on the state it was built in — offline, always,
+/// because at launch nothing has been enumerated yet.
+struct MenuBarLabel: View {
+    @ObservedObject var controller: DomainController
+
+    var body: some View {
+        // Template PDFs from scripts/make-glyph.swift — AppKit tints them to
+        // whatever the menu bar currently is.
+        Image(controller.devices.contains { $0.state.isUsable }
+              ? "MenuBarIcon"
+              : "MenuBarIconOffline")
+            .renderingMode(.template)
     }
 }
 
