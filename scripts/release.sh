@@ -93,11 +93,10 @@ for target in "$APP" "$APPEX"; do
 done
 
 step "Build the disk image"
-STAGE="$BUILD/stage"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "Sideport" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+# Styling and layout live in scripts/make-dmg.sh, which needs Finder — the only
+# thing that can write an icon view's .DS_Store. It warns and ships an unstyled
+# image rather than failing if Finder cannot be driven.
+"$ROOT/scripts/make-dmg.sh" "$APP" "$DMG" "Sideport"
 codesign --sign "Developer ID Application" --timestamp "$DMG"
 
 step "Notarize"

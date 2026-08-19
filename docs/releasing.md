@@ -81,6 +81,29 @@ Then it builds and signs the DMG, notarizes it, **staples** the ticket, and runs
 a final `spctl` assessment the way a first-time user's Mac would. On rejection it
 prints the notarization log rather than a bare status.
 
+### The disk image
+
+[`scripts/make-dmg.sh`](../scripts/make-dmg.sh) packages the app, and both
+`make release` and `make dmg` go through it. There is no installer here, so the
+drag *is* the install and the window has to say so without instructions: the app
+and an `/Applications` symlink on two panels, an arrow between them, and a
+background drawn from the icon's own palette by
+[`scripts/make-dmg-background.swift`](../scripts/make-dmg-background.swift). The
+volume takes the app's compiled `AppIcon.icns` as its icon.
+
+Two things about that are worth knowing before changing it:
+
+- **Finder writes the layout, so Finder has to be driven.** An icon view's
+  arrangement lives in the volume's `.DS_Store`, which only Finder can write,
+  which means AppleScript and a mounted read/write image that is compressed
+  afterwards. A machine that has not granted the terminal control of Finder
+  (System Settings → Privacy & Security → Automation) cannot do this; the script
+  warns and ships an unstyled image rather than failing the release.
+- **The panels are deliberately mid-toned.** Finder draws icon labels in black
+  under a light appearance and white under a dark one, on top of whatever the
+  background says, so anything tuned for one appearance is illegible in the
+  other. At the value used both land near 4.5:1.
+
 ### The first archive
 
 Automatic signing registers the two App IDs and the App Group in the portal and

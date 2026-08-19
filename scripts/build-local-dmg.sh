@@ -14,7 +14,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/.release"
 DERIVED="$BUILD/DerivedData"
 APP="$DERIVED/Build/Products/Release/Sideport.app"
-STAGE="$BUILD/stage"
 DMG="$BUILD/Sideport.dmg"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
@@ -104,10 +103,7 @@ for target in "$APPEX" "$APP"; do
 done
 
 step "Package"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "Sideport" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+"$ROOT/scripts/make-dmg.sh" "$APP" "$DMG" "Sideport"
 codesign --sign "$IDENTITY" --timestamp "$DMG" 2>/dev/null \
     || codesign --sign "$IDENTITY" "$DMG"
 
