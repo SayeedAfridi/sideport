@@ -144,8 +144,11 @@ struct MenuContent: View {
             Text([labels.model, status?.capacityDescription]
                 .compactMap { $0 }
                 .joined(separator: " · "))
-            if status?.activity.isBusy == true {
-                Text("Transferring…")
+            // The line that was missing: a copy into the phone outlives its
+            // Finder progress sheet by the whole length of the USB transfer,
+            // and until now nothing said how much of it was left.
+            if let transfer = status?.transfers.summary {
+                Text(transfer)
             }
         case .unauthorized:
             Text("\(controller.labels(for: device).name) — unauthorized")

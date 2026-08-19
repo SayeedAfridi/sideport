@@ -11,10 +11,11 @@ import Foundation
 /// replugged reuses its metadata store instead of renumbering every file. The
 /// *display name* is separate and is what Finder shows in the sidebar.
 /// What we can tell the user about one attached device.
-struct DeviceStatus: Sendable, Equatable {
+struct DeviceStatus: Equatable {
     var totalBytes: Int64?
     var freeBytes: Int64?
-    var activity = TransferActivity()
+    /// What the system still has queued for this device, in both directions.
+    var transfers = DeviceTransfers()
 
     var capacityDescription: String? {
         guard let freeBytes, let totalBytes, totalBytes > 0 else { return nil }
@@ -45,7 +46,7 @@ final class DomainController: ObservableObject {
     private let server = AdbServerController()
     private let preferences = Preferences()
     private var watcher: Task<Void, Never>?
-    private var poller: Task<Void, Never>?
+    private let monitor = TransferMonitor()
     /// Resolved once per device: it costs a shell round trip and cannot change
     /// while the device stays plugged in.
     private var friendlyNames: [String: String] = [:]
@@ -63,13 +64,14 @@ final class DomainController: ObservableObject {
     func start() {
         guard watcher == nil else { return }
         adbBinaryPath = server.binaryPath
+        monitor.onChange = { [weak self] serial, transfers in
+            self?.statuses[serial, default: DeviceStatus()].transfers = transfers
+        }
         watcher = Task { await watch() }
-        poller = Task { await pollActivity() }
     }
 
     func stop() {
         watcher?.cancel(); watcher = nil
-        poller?.cancel(); poller = nil
     }
 
     /// Starts the shared adb server. Never a private one on a private port:
@@ -89,20 +91,6 @@ final class DomainController: ObservableObject {
         friendlyNames.removeAll()
         let snapshot = devices
         Task { await apply(snapshot) }
-    }
-
-    /// Transfer activity is written by the extension, so it can only be polled.
-    /// A second is frequent enough for a menu nobody stares at.
-    private func pollActivity() async {
-        while !Task.isCancelled {
-            for device in devices where device.state.isUsable {
-                let activity = TransferReporter.read(serial: device.serial)
-                if statuses[device.serial]?.activity != activity {
-                    statuses[device.serial, default: DeviceStatus()].activity = activity
-                }
-            }
-            try? await Task.sleep(for: .seconds(1))
-        }
     }
 
     /// Follows the adb server's own hot-plug stream, reconnecting if the server
@@ -179,6 +167,16 @@ final class DomainController: ObservableObject {
 
         statuses = statuses.filter { key, _ in usable.contains { $0.serial == key } }
         for device in usable { await refreshCapacity(for: device) }
+
+        // The list is re-read rather than reusing `registered`: that snapshot
+        // predates the additions just made, and a domain registered moments ago
+        // is exactly the one worth watching.
+        let live = (try? await NSFileProviderManager.domains()) ?? []
+        monitor.track(usable.map(\.serial), domains: live)
+        for device in usable {
+            statuses[device.serial, default: DeviceStatus()].transfers =
+                monitor.transfers(for: device.serial)
+        }
 
         await checkUserEnabled()
     }

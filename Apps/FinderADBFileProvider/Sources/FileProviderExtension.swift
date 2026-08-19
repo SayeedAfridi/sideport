@@ -67,6 +67,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                        completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         Task { [session, domain] in
+            defer { progress.completedUnitCount = progress.totalUnitCount }
             do {
                 guard let id = itemIdentifier.itemID else { throw CoreError.itemNotFound(0) }
                 let (stored, version) = try await session.itemAndVersion(id)
@@ -111,6 +112,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         // the phone never sees it.
         guard !SyncExclusions.excludes(filename) else {
             Log.write.debug("excluded \(filename, privacy: .public) from sync")
+            progress.completedUnitCount = progress.totalUnitCount
             completionHandler(nil, [], false, NSFileProviderError(.excludedFromSync))
             return progress
         }
@@ -119,6 +121,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let expected = (itemTemplate.documentSize ?? nil)?.int64Value ?? 1
 
         Task { [session] in
+            // Every exit finishes the progress. The system folds these into the
+            // domain's aggregate upload progress — the figure the menu bar now
+            // reports — and one that never finishes is one that never leaves the
+            // total. Directories were the clearest case: they set no byte counts
+            // at all, so nothing else was ever going to complete them.
+            defer { progress.completedUnitCount = progress.totalUnitCount }
             do {
                 guard let parent = itemTemplate.parentItemIdentifier.itemID else {
                     throw CoreError.itemNotFound(0)
@@ -158,6 +166,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let progress = Progress(totalUnitCount: 1)
 
         guard !SyncExclusions.excludes(item.filename) else {
+            progress.completedUnitCount = progress.totalUnitCount
             completionHandler(nil, [], false, NSFileProviderError(.excludedFromSync))
             return progress
         }
@@ -169,6 +178,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let expected = (item.documentSize ?? nil)?.int64Value ?? 1
 
         Task { [session] in
+            defer { progress.completedUnitCount = progress.totalUnitCount }
             do {
                 guard let id = item.itemIdentifier.itemID else { throw CoreError.itemNotFound(0) }
                 var current = try await session.itemAndVersion(id)
