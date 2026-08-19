@@ -63,6 +63,12 @@ public enum ProviderError {
             // problem either, and saying so would send the user looking for a
             // sign-in that does not exist.
             return provider(.cannotSynchronize, underlying: error)
+        case .storageUnavailable:
+            // The volume, not the file. This one is worth being careful about:
+            // the failing path is the *root*, and `.noSuchItem` there would tell
+            // the system every file on the phone had ceased to exist. It clears
+            // on its own once the device finishes mounting, so hold and retry.
+            return provider(.serverUnreachable, underlying: error)
         case .database:
             // Our own store is broken. Retrying the same item will not help, but
             // the domain is not dead either — the next request may touch rows

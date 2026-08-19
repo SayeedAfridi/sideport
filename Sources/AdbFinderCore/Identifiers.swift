@@ -22,6 +22,29 @@ public enum FinderADB {
     /// resolved. Used as a fallback; the real root is resolved per device.
     public static let defaultDeviceRoot = "/storage/emulated/0"
 
+    /// The storage roots to try, in order, given what `readlink -f /sdcard` said.
+    ///
+    /// A *candidate*, never an answer. `readlink -f` will happily name a path
+    /// that does not exist — a device answering while its user storage is still
+    /// mounting resolves `/sdcard` to `/storage/self/primary` and stops there —
+    /// so the caller has to prove each one listable before believing it. Taking
+    /// the first plausible-looking string instead is what pinned a whole
+    /// extension lifetime to a directory that could not be read.
+    ///
+    /// The default is always last, so a device that resolves to something
+    /// unusable still gets the documented path tried before anyone gives up.
+    public static func rootCandidates(resolved: String?, succeeded: Bool) -> [String] {
+        var candidates: [String] = []
+        if succeeded, let resolved {
+            let trimmed = resolved.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Absolute paths only: a relative one would be resolved against
+            // whatever directory the next shell happens to start in.
+            if trimmed.hasPrefix("/") { candidates.append(trimmed) }
+        }
+        if !candidates.contains(defaultDeviceRoot) { candidates.append(defaultDeviceRoot) }
+        return candidates
+    }
+
     /// Per-device metadata database inside the shared container.
     ///
     /// One database per device, not one shared: unrelated devices should not

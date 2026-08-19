@@ -15,6 +15,10 @@ public enum CoreError: Error, Sendable {
     /// The App Group container is unreachable — almost always a missing or
     /// misspelled `com.apple.security.application-groups` entitlement.
     case appGroupUnavailable(String)
+    /// User storage is not there to be read. A device that answers before its
+    /// volumes are mounted resolves `/sdcard` to a path it cannot then list,
+    /// and neither the resolved path nor the default one is usable.
+    case storageUnavailable(String)
 }
 
 extension CoreError: LocalizedError {
@@ -26,6 +30,8 @@ extension CoreError: LocalizedError {
         case .anchorExpired: return "Sync anchor is older than the retained change log."
         case .appGroupUnavailable(let group):
             return "App Group \(group) is unavailable. Check the application-groups entitlement."
+        case .storageUnavailable(let path):
+            return "Device storage at \(path) is not readable. It may still be mounting, or locked."
         }
     }
 }

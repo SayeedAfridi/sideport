@@ -14,9 +14,6 @@ actor DeviceSession {
     nonisolated let rootFilename: String
 
     private let client = AdbClient()
-    /// Lets the menu bar answer "is anything still going on?" without a window.
-    /// Finder shows per-copy progress already; this is the different question.
-    private let transfers: TransferReporter
     private var store: MetadataStore?
     private var deviceRoot: String?
     private var opening: Task<MetadataStore, Error>?
@@ -25,7 +22,6 @@ actor DeviceSession {
 
     init(domain: NSFileProviderDomain) {
         self.domain = domain
-        self.transfers = TransferReporter(serial: domain.identifier.rawValue)
         serial = domain.identifier.rawValue
         selector = .serial(domain.identifier.rawValue)
         rootFilename = domain.displayName
@@ -61,7 +57,7 @@ actor DeviceSession {
     }
 
     private func openStore() async throws -> MetadataStore {
-        let root = await resolveRoot()
+        let root = try await resolveRoot()
         let url = try FinderADB.storeURL(forSerial: serial)
         let opened = try MetadataStore(path: url.path, deviceRoot: root)
 
@@ -88,15 +84,42 @@ actor DeviceSession {
     /// `/sdcard` is a symlink to `/storage/self/primary`, itself a symlink to
     /// `/storage/emulated/0`. Resolved once per session rather than paying two
     /// indirections on every single operation.
-    private func resolveRoot() async -> String {
+    ///
+    /// The answer is **proved listable before it is cached**, and the session
+    /// refuses to open rather than cache one that is not. `readlink -f` will
+    /// happily name a path that does not exist: a device that answers while its
+    /// user storage is still mounting resolves `/sdcard` to `/storage/self/primary`
+    /// and stops there. Taking that at its word — the old behaviour, which
+    /// checked only for a leading slash — pinned the root for the life of the
+    /// extension, and every enumeration in that session then failed with
+    /// `ls: /storage/self/primary: No such file or directory`. A mount that
+    /// stays broken until the process is restarted.
+    ///
+    /// Throwing instead is what makes it recoverable: `preparedStore()` drops
+    /// its in-flight task on error, so the next request resolves again, and
+    /// `.storageUnavailable` reaches Finder as "hold and retry" rather than as
+    /// a claim that the device is empty.
+    private func resolveRoot() async throws -> String {
         if let deviceRoot { return deviceRoot }
+
         let result = try? await client.shell("readlink -f /sdcard", on: selector)
-        let candidate = result?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let root = (result?.succeeded == true && candidate.hasPrefix("/"))
-            ? candidate
-            : FinderADB.defaultDeviceRoot
-        deviceRoot = root
-        return root
+        let candidates = FinderADB.rootCandidates(resolved: result?.stdout,
+                                                  succeeded: result?.succeeded == true)
+
+        for candidate in candidates {
+            do {
+                try await client.confirmListable(candidate, on: selector)
+                deviceRoot = candidate
+                Log.domain.info("root resolved to \(candidate, privacy: .public)")
+                return candidate
+            } catch {
+                Log.domain.error("""
+                    root \(candidate, privacy: .public) is not listable: \
+                    \(error.localizedDescription, privacy: .public)
+                    """)
+            }
+        }
+        throw CoreError.storageUnavailable(candidates.first ?? FinderADB.defaultDeviceRoot)
     }
 
     // MARK: - Enumeration
@@ -205,10 +228,7 @@ actor DeviceSession {
         let store = try await preparedStore()
         let path = try store.path(of: id)
         Log.fetch.info("pulling \(path, privacy: .public)")
-        let token = transfers.begin()
-        defer { token.finish() }
         try await client.pull(path, to: destination, on: selector) { sent in
-            token.report(sent)
             try progress(sent)
         }
     }
@@ -230,10 +250,7 @@ actor DeviceSession {
         let store = try await preparedStore()
         let path = try store.path(of: parent) + "/" + name
         Log.write.info("create \(path, privacy: .public)")
-        let token = transfers.begin()
-        defer { token.finish() }
         try await client.pushAtomically(source, to: path, on: selector) { sent in
-            token.report(sent)
             try progress(sent)
         }
         return try await record(path: path, name: name, in: parent, store: store)
@@ -245,10 +262,7 @@ actor DeviceSession {
         let store = try await preparedStore()
         let path = try store.path(of: id)
         Log.write.info("write \(path, privacy: .public)")
-        let token = transfers.begin()
-        defer { token.finish() }
         try await client.pushAtomically(source, to: path, on: selector) { sent in
-            token.report(sent)
             try progress(sent)
         }
 

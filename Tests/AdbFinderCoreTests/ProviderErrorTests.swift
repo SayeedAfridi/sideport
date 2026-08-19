@@ -73,6 +73,16 @@ struct ProviderErrorTests {
         #expect(isProvider(ProviderError.map(CoreError.anchorExpired), .syncAnchorExpired))
     }
 
+    /// Unreadable storage is the device, not the file — and the path that fails
+    /// is the *root*, so `.noSuchItem` here would be an instruction to drop the
+    /// entire phone from the replica. It also clears on its own once the device
+    /// finishes mounting, which is exactly what `.serverUnreachable` is for.
+    @Test func unmountedStorageIsHeldAndRetriedNotDeclaredMissing() {
+        let error = ProviderError.map(CoreError.storageUnavailable("/storage/self/primary"))
+        #expect(isProvider(error, .serverUnreachable))
+        #expect(!isProvider(error, .noSuchItem))
+    }
+
     @Test func unrecognisedFailuresAreSurfacedNotGuessedAt() {
         let error = ProviderError.map(AdbError.syncFailed("closed"))
         #expect(isProvider(error, .cannotSynchronize))
