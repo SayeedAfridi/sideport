@@ -49,8 +49,9 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         # Menu bar only — this app has no window worth a Dock icon.
         LSUIElement: true
-        # The Finder sidebar takes a domain's icon from the containing app, so
-        # without this the device shows up under the generic application icon.
+        # Without this the app has no icon anywhere it is listed — the
+        # File Providers pane in System Settings, Login Items, the Finder.
+        # It is *not* what the sidebar draws; see the extension below.
         CFBundleIconName: AppIcon
     entitlements:
       path: Apps/Sideport/Sideport.entitlements
@@ -85,6 +86,14 @@ targets:
       properties:
         CFBundleName: SideportFileProvider
         CFBundleDisplayName: Sideport
+        # The Finder sidebar row for a domain. Not an icon file — Apple's only
+        # supported hook is an SF Symbol named here, on the *extension*, which
+        # Finder draws as a template glyph alongside Network and iCloud Drive.
+        # gen3 is the bezel-less slab: no notch, no home button, nothing that
+        # says iPhone to someone looking at their Android.
+        CFBundleIcons:
+          CFBundlePrimaryIcon:
+            CFBundleSymbolName: iphone.gen3
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)

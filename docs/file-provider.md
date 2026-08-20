@@ -32,6 +32,42 @@ Drive's own plist rather than by guessing:
 They live in [`project.yml`](../project.yml), which generates the plist. Never
 edit the generated file.
 
+### The icon in the sidebar
+
+The domain has no icon of its own to set. `NSFileProviderDomain` carries a name
+and nothing visual, and the FileProvider framework exposes no icon anywhere else
+— `NSFileProviderItemDecoration` badges an item, it does not draw the sidebar
+row. Left alone, a mounted phone gets the same generic folder icon as any
+directory.
+
+The one supported hook is a **fifth `Info.plist` key on the extension**:
+
+| Key | Why |
+|---|---|
+| `CFBundleIcons` → `CFBundlePrimaryIcon` → `CFBundleSymbolName` | The Finder sidebar row for the domain. Names an SF Symbol, which Finder draws as a template glyph |
+
+We name `iphone.gen3`: the bezel-less slab, with no notch and no home button, so
+nothing about it says *iPhone* to someone looking at their Android. As a template
+it tints with the sidebar like Network and iCloud Drive, instead of sitting there
+as a full-colour app icon — which is the look Apple's own HIG argues against and
+which providers that ship an `.icns` end up with.
+
+Two plausible-looking routes are dead ends, and both were tried:
+
+- **An icon on the root item's type.** Declaring an exported UTI for the root and
+  giving it an `.icns` does register — `NSWorkspace.icon(for:)` hands back the
+  custom picture — but Finder never asks. The sidebar row and the mount point in
+  `~/Library/CloudStorage` both stay generic folders.
+- **An app icon on the extension bundle.** `CFBundleIconName` plus an asset
+  catalog in the `.appex` is how the *File Providers* pane in System Settings
+  finds a picture, and an asset catalog is separately documented to stop template
+  sidebar icons working at all.
+
+For a custom glyph rather than a stock one, `CFBundleSymbolName` also accepts the
+name of a custom symbol in the extension's asset catalog — the same route the
+menu bar glyph would take if the phone ever needs to become
+[`make-glyph.swift`](../scripts/make-glyph.swift)'s rail-and-pane shape.
+
 ## Domain lifecycle
 
 One `NSFileProviderDomain` per device, owned by the container app
