@@ -7,10 +7,46 @@ Mount Android devices in macOS Finder over **adb** — no MTP, no macFUSE, no ke
 | Layer | State |
 |---|---|
 | `AdbKit` — native Swift adb client | ✅ built and verified against hardware |
-| `adbctl` — CLI harness | ✅ 17/17 self-test checks pass |
+| `adbctl` — CLI harness | ✅ 35/35 self-test checks pass on hardware |
 | File Provider extension | ✅ browse, fetch, ranged reads, writes, live change detection |
 | Container app (device discovery, domain registration) | ✅ menu bar app, transfer status, settings |
 | Signed and notarized DMG | ✅ `make release` |
+
+## Install
+
+| | |
+|---|---|
+| macOS | 14 (Sonoma) or newer |
+| `adb` | Android platform-tools — `brew install --cask android-platform-tools` |
+| Device | Android phone with USB debugging turned on |
+
+Sideport does not bundle `adb`. It finds the platform-tools you already have —
+Homebrew, an Android Studio SDK, or anything on your login shell's `PATH` — and
+starts the *shared* adb server, so Android Studio and the command line keep
+working while a device is mounted.
+
+1. Download `Sideport.dmg` from the [latest
+   release](https://github.com/SayeedAfridi/sideport/releases/latest).
+2. Open it and drag **Sideport** onto **Applications**. The build is signed and
+   notarized, so it opens normally — no right-click-Open detour.
+3. Launch it. There is no Dock icon: Sideport lives in the menu bar as a small
+   phone, drawn with a slash through it while no device is usable.
+4. Plug the phone in over USB and accept the debugging prompt on its screen.
+   Until you do, the menu lists the device as *unauthorized*.
+
+The device then appears in the Finder sidebar, and its files live under
+`~/Library/CloudStorage/Sideport-<Device>`. Nothing is copied to the Mac until
+you open it.
+
+If the menu says *Turn on "Sideport" in System Settings*, macOS has switched the
+File Provider extension off — it is registered enabled, but that can be
+overridden. Use the button beside the message; it opens the right pane directly.
+While the extension is off the device still browses, but every write is
+rejected, which reads as a mount that is silently read-only.
+
+Not working? [docs/troubleshooting.md](docs/troubleshooting.md) collects the
+failures that point somewhere other than their cause. To build from source
+instead, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Why the wire protocol instead of the `adb` binary
 
@@ -27,7 +63,7 @@ each time.
 
 ```
 Finder
-  └─ File Provider extension (sandboxed)   ← next
+  └─ File Provider extension (sandboxed)
        └─ AdbKit ──TCP──▶ adb server :5037 ──USB──▶ device
   └─ Container app (registers the domain, starts adb server)
 ```
