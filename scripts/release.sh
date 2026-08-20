@@ -53,7 +53,16 @@ step "Regenerate project"
 (cd "$ROOT" && xcodegen generate >/dev/null)
 
 step "Test before shipping"
-(cd "$ROOT" && swift test 2>&1 | tail -3)
+# The whole run goes to a log and only the summary is printed, because a passing
+# suite has nothing to say. A failing one does, and a three-line tail is the one
+# thing you cannot debug from — on CI it left nothing behind but the doc comment
+# above the test that broke. So a failure prints the failures.
+if (cd "$ROOT" && swift test >"$BUILD/test.log" 2>&1); then
+    tail -3 "$BUILD/test.log" | sed 's/^/  /'
+else
+    grep -E '✘|error:|warning: .*test' "$BUILD/test.log" | head -40 | sed 's/^/  /'
+    die "tests failed — full output in $BUILD/test.log"
+fi
 
 # Automatic signing needs permission to fetch — and on a first run, create —
 # the Developer ID profiles for the app, the extension and the App Group.
