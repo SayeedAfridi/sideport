@@ -13,7 +13,11 @@ settings:
   base:
     DEVELOPMENT_TEAM: NU2JM39S5P
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1.0"
+    # Shown in Finder's Get Info and the About panel, and the string the
+    # release tag has to match. The `-beta.N` suffix is a semver prerelease:
+    # App Store validation would reject a non-numeric CFBundleShortVersionString,
+    # but this app ships under Developer ID, where nothing parses it.
+    MARKETING_VERSION: "0.1.0-beta.1"
     CURRENT_PROJECT_VERSION: "1"
     # Swift 5 language mode for the AppKit/FileProvider glue only. Every target
     # in Package.swift stays on Swift 6; the completion-handler File Provider

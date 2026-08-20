@@ -126,6 +126,23 @@ undo once a release is public: the tag must match `MARKETING_VERSION` in
 exist. The release is created as a **draft** unless the *draft* input is set to
 false, so the notes can be written before anyone can download it.
 
+### Versioning
+
+`MARKETING_VERSION` in [`project.yml`](../project.yml) is the single source: it
+becomes `CFBundleShortVersionString` for both bundles, and the tag must be that
+string with a `v` in front. Betas carry a semver prerelease suffix —
+`0.1.0-beta.1`, tagged `v0.1.0-beta.1` — and the workflow turns any tag
+containing a hyphen into a GitHub pre-release.
+
+That has one consequence worth knowing: GitHub keeps pre-releases out of
+`/releases/latest`, so while only betas exist that URL resolves to nothing. The
+README therefore links to the releases page instead. Point it back at
+`/releases/latest` when the first non-beta ships.
+
+A non-numeric `CFBundleShortVersionString` would fail App Store validation.
+Nothing in Developer ID distribution parses it — not notarization, not
+Gatekeeper — so the suffix is safe here and would not be for an App Store build.
+
 ### What a runner does not have
 
 A maintainer's Mac carries the credentials in its keychain. A runner has no

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to create, e.g. v0.1.0 — must match MARKETING_VERSION in project.yml'
+        description: 'Release tag to create, e.g. v0.1.0-beta.1 — must match MARKETING_VERSION in project.yml'
         required: true
         type: string
       draft:
@@ -144,6 +144,12 @@ jobs:
           # Anything but an explicit false leaves it a draft, so a tag push —
           # which supplies no inputs at all — cannot publish unattended.
           [ "$DRAFT" = "false" ] || args+=(--draft)
+          # A semver prerelease suffix marks the release as one. GitHub then
+          # keeps it out of /releases/latest, which is the point: a beta should
+          # not become the download an unsuspecting visitor lands on.
+          case "$TAG" in
+            *-*) args+=(--prerelease); echo "$TAG is a prerelease" ;;
+          esac
 
           gh release create "$TAG" .release/Sideport.dmg \
             --target "$GITHUB_SHA" \

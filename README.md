@@ -25,8 +25,10 @@ Homebrew, an Android Studio SDK, or anything on your login shell's `PATH` — an
 starts the *shared* adb server, so Android Studio and the command line keep
 working while a device is mounted.
 
-1. Download `Sideport.dmg` from the [latest
-   release](https://github.com/SayeedAfridi/sideport/releases/latest).
+1. Download `Sideport.dmg` from the
+   [releases page](https://github.com/SayeedAfridi/sideport/releases). Sideport
+   is in beta: releases are tagged `-beta.N`, and GitHub marks them
+   pre-releases, which is why they do not appear as the *latest* release.
 2. Open it and drag **Sideport** onto **Applications**. The build is signed and
    notarized, so it opens normally — no right-click-Open detour.
 3. Launch it. There is no Dock icon: Sideport lives in the menu bar as a small
