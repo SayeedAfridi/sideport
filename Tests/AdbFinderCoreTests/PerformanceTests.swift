@@ -10,6 +10,21 @@ import Testing
 struct PerformanceTests {
     private static let count = 10_000
 
+    /// A number of milliseconds only means something on a machine whose speed
+    /// you know. A shared CI runner's speed is whatever the neighbouring job
+    /// leaves it — the same reconcile that takes 25 ms on a developer's Mac can
+    /// take three times that there, and a build failing on it says nothing
+    /// about the change that triggered it.
+    ///
+    /// So the tight budget — the one that stands in for "instant in Finder" —
+    /// is enforced where it is meaningful, and a much looser ceiling is
+    /// enforced everywhere. The loose one still catches the regression that
+    /// actually matters: a steady-state pass that quietly went back to
+    /// rewriting all 10,000 rows would blow through it on any hardware.
+    private static let onCI = ProcessInfo.processInfo.environment["CI"] != nil
+    private static let steadyBudget: Double = onCI ? 500 : 50
+    private static let coldBudget: Double = onCI ? 2_000 : 500
+
     private func listing(changing changed: Int = 0) -> [AdbFileEntry] {
         (0..<Self.count).map { index in
             AdbFileEntry(name: "file-\(index).bin",
@@ -50,10 +65,12 @@ struct PerformanceTests {
         }
 
         // Steady state is the gate: it happens on every enumeration.
-        #expect(steady < 50, "steady-state reconcile of 10k entries took \(steady) ms")
-        #expect(incremental < 50, "incremental reconcile took \(incremental) ms")
+        #expect(steady < Self.steadyBudget,
+                "steady-state reconcile of 10k entries took \(steady) ms")
+        #expect(incremental < Self.steadyBudget,
+                "incremental reconcile took \(incremental) ms")
         // Cold is a one-off per directory, so it gets a looser budget.
-        #expect(cold < 500, "cold reconcile of 10k entries took \(cold) ms")
+        #expect(cold < Self.coldBudget, "cold reconcile of 10k entries took \(cold) ms")
     }
 
     @Test func deepPathResolutionStaysCheap() throws {
@@ -69,6 +86,6 @@ struct PerformanceTests {
             for _ in 0..<1_000 { _ = try store.path(of: parent) }
         }
         #expect(try store.path(of: parent).hasSuffix("/d63"))
-        #expect(elapsed < 50, "cached path resolution took \(elapsed) ms")
+        #expect(elapsed < Self.steadyBudget, "cached path resolution took \(elapsed) ms")
     }
 }
