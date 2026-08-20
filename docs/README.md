@@ -12,7 +12,7 @@ explanation.
 | [change-detection.md](change-detection.md) | Stable identifiers, content versions, and how the device tells us it changed |
 | [decisions.md](decisions.md) | Why the load-bearing choices were made, and what would justify revisiting them |
 | [troubleshooting.md](troubleshooting.md) | Build and runtime traps that misdirect — read this before doubting your code |
-| [releasing.md](releasing.md) | Signing, notarization, and what `make release` verifies |
+| [releasing.md](releasing.md) | Signing, notarization, what `make release` verifies, and the CI workflow that runs it |
 
 Want to change something? [CONTRIBUTING.md](../CONTRIBUTING.md) has the build,
 the test gates, and the commit conventions.

@@ -18,6 +18,29 @@ DMG="$BUILD/Sideport.dmg"
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 die()  { printf '\033[31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 
+# Where the credentials come from.
+#
+# On a maintainer's Mac both live in the keychain: the Developer ID identity,
+# and a notarytool profile stored once by `xcrun notarytool store-credentials`.
+# A CI runner has neither, and cannot have the second — so an App Store Connect
+# API key stands in for both when ASC_KEY_PATH is set. The same key also
+# authenticates xcodebuild, which otherwise has no account to fetch the
+# Developer ID provisioning profiles with, and fails at the archive.
+#
+# Empty arrays are expanded through the `${a[@]+...}` guard because /bin/bash on
+# macOS is 3.2, where an unguarded empty expansion under `set -u` is an error.
+NOTARY_AUTH=(--keychain-profile "$KEYCHAIN_PROFILE")
+XCODE_AUTH=()
+if [ -n "${ASC_KEY_PATH:-}" ]; then
+    [ -f "$ASC_KEY_PATH" ] || die "ASC_KEY_PATH is set but there is no file at $ASC_KEY_PATH"
+    : "${ASC_KEY_ID:?ASC_KEY_PATH is set, so ASC_KEY_ID must be too}"
+    : "${ASC_ISSUER_ID:?ASC_KEY_PATH is set, so ASC_ISSUER_ID must be too}"
+    NOTARY_AUTH=(--key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
+    XCODE_AUTH=(-authenticationKeyPath "$ASC_KEY_PATH"
+                -authenticationKeyID "$ASC_KEY_ID"
+                -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+fi
+
 security find-identity -v -p codesigning 2>/dev/null \
     | grep -q "Developer ID Application.*$TEAM" \
     || die "no Developer ID Application certificate for $TEAM — run scripts/preflight-release.sh"
@@ -43,6 +66,7 @@ xcodebuild -project "$ROOT/Sideport.xcodeproj" \
     -archivePath "$ARCHIVE" \
     -destination 'generic/platform=macOS' \
     -allowProvisioningUpdates \
+    ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"} \
     archive | tail -5
 
 step "Export with Developer ID"
@@ -50,7 +74,8 @@ xcodebuild -exportArchive \
     -archivePath "$ARCHIVE" \
     -exportPath "$EXPORT" \
     -exportOptionsPlist "$ROOT/scripts/release/ExportOptions.plist" \
-    -allowProvisioningUpdates | tail -5
+    -allowProvisioningUpdates \
+    ${XCODE_AUTH[@]+"${XCODE_AUTH[@]}"} | tail -5
 [ -d "$APP" ] || die "export produced no app at $APP"
 
 step "Verify what we are about to ship"
@@ -100,12 +125,12 @@ step "Build the disk image"
 codesign --sign "Developer ID Application" --timestamp "$DMG"
 
 step "Notarize"
-xcrun notarytool submit "$DMG" --keychain-profile "$KEYCHAIN_PROFILE" --wait 2>&1 | tee "$BUILD/notary.log"
+xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait 2>&1 | tee "$BUILD/notary.log"
 grep -q "status: Accepted" "$BUILD/notary.log" || {
     ID=$(grep -m1 "id:" "$BUILD/notary.log" | awk '{print $2}')
     echo
     echo "Notarization did not succeed. The reason is in the log:"
-    xcrun notarytool log "$ID" --keychain-profile "$KEYCHAIN_PROFILE" 2>&1 | head -40
+    xcrun notarytool log "$ID" "${NOTARY_AUTH[@]}" 2>&1 | head -40
     die "notarization rejected"
 }
 

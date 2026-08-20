@@ -162,7 +162,7 @@ modes the device advertises (`lz4`, `zstd`, `brotli`) would buy nothing here.
 - [change-detection.md](docs/change-detection.md) — identifiers, versions, and the watcher
 - [decisions.md](docs/decisions.md) — why the load-bearing choices were made
 - [troubleshooting.md](docs/troubleshooting.md) — traps that misdirect
-- [releasing.md](docs/releasing.md) — signing and notarization
+- [releasing.md](docs/releasing.md) — signing, notarization, and the release workflow
 
 ## Contributing
 

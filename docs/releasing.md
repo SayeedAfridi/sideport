@@ -112,6 +112,68 @@ the App Group entitlement, which is what requires profiles for Developer ID
 distribution. If the export fails complaining about profiles, open the project in
 Xcode once, let it resolve them, and re-run.
 
+## Releasing from CI
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) runs the same
+`make release` on a GitHub runner and publishes the DMG to a GitHub release. It
+is **manual** — Actions ▸ Release ▸ *Run workflow* — and takes the tag to create.
+A tag-push trigger is written out and commented above it, ready to enable once
+the workflow has been watched succeed.
+
+Two guards run before anything is built, because both failures are expensive to
+undo once a release is public: the tag must match `MARKETING_VERSION` in
+[`project.yml`](../project.yml), and a release for that tag must not already
+exist. The release is created as a **draft** unless the *draft* input is set to
+false, so the notes can be written before anyone can download it.
+
+### What a runner does not have
+
+A maintainer's Mac carries the credentials in its keychain. A runner has no
+keychain, no Xcode account, and cannot hold a `notarytool` profile, so one App
+Store Connect API key stands in for both roles: it authenticates `xcodebuild`,
+which otherwise has no account to fetch the Developer ID provisioning profiles
+with and fails at the archive, and it authenticates `notarytool`. `release.sh`
+switches to it whenever `ASC_KEY_PATH` is set and is otherwise unchanged, so the
+local path still uses the keychain profile.
+
+The certificate is imported into a throwaway keychain that is unlocked with a
+password valid only for that run and deleted afterwards. `set-key-partition-list`
+is what stops `codesign` from waiting on a GUI confirmation nobody is there to
+give — without it the job hangs to its timeout instead of failing with a reason.
+
+### Repository secrets
+
+Settings ▸ Secrets and variables ▸ Actions:
+
+| Secret | What it is |
+|---|---|
+| `DEVELOPER_ID_CERT_P12` | The Developer ID Application certificate *with its private key*, exported as `.p12` and base64-encoded |
+| `DEVELOPER_ID_CERT_PASSWORD` | The password set when exporting that `.p12` |
+| `ASC_KEY_P8` | The App Store Connect `.p8` key, base64-encoded |
+| `ASC_KEY_ID` | Its Key ID |
+| `ASC_ISSUER_ID` | The Issuer ID, from the same page |
+
+Both files are base64-encoded because a secret is a single-line string:
+
+```sh
+base64 -i DeveloperID.p12 | pbcopy
+base64 -i ~/private_keys/AuthKey_<KEYID>.p8 | pbcopy
+```
+
+The `.p8` needs the **Developer** role, the same key described under
+[Notarization credential](#2-notarization-credential). Nothing here is a second
+set of credentials — it is the same certificate and the same key the local
+release already uses.
+
+### The DMG comes out unstyled
+
+The window layout is written by Finder, and a runner cannot drive Finder.
+`make-dmg.sh` warns and ships an unstyled image rather than failing, so what CI
+publishes is correct, signed, notarized and installable — but without the two
+panels, the arrow and the background. A styled image still has to come from
+`make release` on a real Mac, and can be uploaded to the draft release in place
+of the built one.
+
 ## Local builds
 
 ```sh

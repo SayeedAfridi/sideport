@@ -1,0 +1,156 @@
+name: Release
+
+# Manual for now. A tag push is the obvious trigger and is left ready below,
+# commented out deliberately: this workflow spends notarization round trips and
+# publishes to the world, so until it has been watched succeed at least once it
+# should only run when someone asks it to.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create, e.g. v0.1.0 — must match MARKETING_VERSION in project.yml'
+        required: true
+        type: string
+      draft:
+        description: 'Publish as a draft so the notes can be written before anyone can download it'
+        required: false
+        default: true
+        type: boolean
+  # push:
+  #   tags:
+  #     - 'v*'
+
+# Creating a release and its tag is a write to the repository.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macOS 14 runners default to Xcode 15, whose Swift predates the
+    # swift-tools-version 6.0 this package declares.
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    env:
+      # A tag push, if it is ever enabled above, arrives as a ref rather than an
+      # input; this resolves either into one name.
+      TAG: ${{ inputs.tag || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Check the tag against the version the app will report
+        # An Info.plist that disagrees with the tag it shipped under is the kind
+        # of mismatch nobody notices until a bug report cites a version that was
+        # never released. Cheap to check here, so it is checked here.
+        run: |
+          version=$(awk '/MARKETING_VERSION:/ {gsub(/["'"'"']/, "", $2); print $2}' project.yml)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match MARKETING_VERSION $version in project.yml (expected v$version)"
+            exit 1
+          fi
+          echo "tag $TAG matches MARKETING_VERSION $version"
+
+      - name: Refuse to overwrite a release that already exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::a release for $TAG already exists — delete it, or bump MARKETING_VERSION"
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Import the Developer ID certificate
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [ -n "$CERT_P12" ] || { echo "::error::secret DEVELOPER_ID_CERT_P12 is empty"; exit 1; }
+
+          # A dedicated keychain rather than the login one: it is unlocked with a
+          # password that exists only for this run, and the whole file is deleted
+          # afterwards whether the build passed or failed.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          # Without this codesign stops for a GUI confirmation that nobody is
+          # there to give, and the job hangs until it times out rather than
+          # failing with anything that explains itself.
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          # The search list has to include it, or `security find-identity` and
+          # xcodebuild both look straight past the certificate we just imported.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN"
+
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          [ -n "$ASC_KEY_P8" ] || { echo "::error::secret ASC_KEY_P8 is empty"; exit 1; }
+          # This one key does two jobs: it authenticates xcodebuild so automatic
+          # signing can fetch the Developer ID profiles, and it authenticates
+          # notarytool. See the credential block in scripts/release.sh.
+          echo "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/asc_key.p8"
+          chmod 600 "$RUNNER_TEMP/asc_key.p8"
+
+      - name: Build, sign, notarize and staple
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/asc_key.p8
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        # `make release` is the same command a maintainer runs locally, and it
+        # keeps its own verification: nested extension signed, no get-task-allow,
+        # both binaries hardened, App Group intact, ticket stapled.
+        #
+        # One thing does differ here. The DMG window layout is written by Finder,
+        # which cannot be driven on a runner, so make-dmg.sh warns and ships an
+        # unstyled image — correct and installable, without the arrow and the
+        # background. A styled image still has to come from `make release` on a
+        # real Mac.
+        run: make release
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          [ -f .release/Sideport.dmg ] || { echo "::error::no DMG was produced"; exit 1; }
+
+          args=(--title "Sideport $TAG" --generate-notes)
+          # Anything but an explicit false leaves it a draft, so a tag push —
+          # which supplies no inputs at all — cannot publish unattended.
+          [ "$DRAFT" = "false" ] || args+=(--draft)
+
+          gh release create "$TAG" .release/Sideport.dmg \
+            --target "$GITHUB_SHA" \
+            "${args[@]}"
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/asc_key.p8" "$RUNNER_TEMP/cert.p12"
